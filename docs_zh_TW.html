@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeBull - 文件 (Documentation)</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <header>
+        <div class="container">
+            <div class="logo">
+                <a href="index.html">Code<span>Bull</span></a>
+            </div>
+            <div class="header-logo-center">
+                <a href="index.html"><img src="asset/codebull-logo.png" alt="CodeBull Logo"></a>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="index.html#features">Features</a></li>
+                    <li><a href="tutorial.html">Tutorial</a></li>
+                    <li><a href="docs_zh_TW.html" class="active">Docs</a></li>
+                    <li><a href="https://github.com/0xbu11/codebull-extension" target="_blank">GitHub</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main class="docs-container">
+        <aside class="docs-sidebar">
+            <nav>
+                <ul>
+                    <li><a href="#introduction">CodeBull 介紹</a></li>
+                    <li><a href="#core-concepts">核心概念</a></li>
+                    <li><a href="#key-features">主要功能</a>
+                        <ul>
+                            <li><a href="#logging">動態日誌 (Dynamic Logging)</a></li>
+                            <li><a href="#metrics">即時指標 (Instant Metrics)</a></li>
+                            <li><a href="#profiling">效能分析 (Profiling)</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="#faq">常見問題 (FAQ)</a></li>
+                </ul>
+            </nav>
+            <div class="language-switcher"
+                style="margin-top: 2rem; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1rem;">
+                <a href="docs.html" style="color: var(--color-text-secondary); font-size: 0.9rem;">English</a>
+                <span style="color: var(--color-text-secondary); margin: 0 0.5rem;">|</span>
+                <span style="color: var(--color-accent); font-weight: bold; font-size: 0.9rem;">中文</span>
+            </div>
+        </aside>
+        <div class="docs-content">
+            <section id="introduction">
+                <h1>CodeBull 介紹</h1>
+                <p>CodeBull 是一款 VS Code 擴充功能，為您的 Go 應用程式帶來<strong>動態可觀測性 (Dynamic Observability)</strong>。
+                    它允許開發人員在不重寫代碼、不重新編譯二進制文件或重啟進程的情況下，將日誌、指標和追蹤注入到正在運行的應用程式中。</p>
+                <p>傳統的除錯通常涉及添加 print 語句、重新編譯和重啟應用程式。CodeBull 利用運行時插樁技術消除了這種摩擦。</p>
+            </section>
+
+            <section id="core-concepts">
+                <h2>核心概念</h2>
+                <div class="concept-card">
+                    <h3>動態插樁 (Dynamic Instrumentation)</h3>
+                    <p>在特定點（例如函數入口/出口、特定行）注入代碼以修改正在運行的程式行為的能力。CodeBull 使用此技術安全地插入可觀測性掛鉤 (hooks)。
+                    </p>
+                </div>
+
+            </section>
+
+            <section id="key-features">
+                <h2>主要功能</h2>
+
+                <article id="logging">
+                    <h3>動態日誌 (Dynamic Logging)</h3>
+                    <p>在代碼的任何位置注入日誌語句。捕獲變數值、函數參數和返回值。</p>
+                    <div class="code-block">
+                        <pre><code>// 範例：在第 42 行記錄變數 'user'
+Log("User logged in: ", user.ID)</code></pre>
+                    </div>
+                </article>
+
+                <article id="metrics">
+                    <h3>即時指標 (Instant Metrics)</h3>
+                    <p>即時監控應用程式的效能和行為。添加計數器 (counters) 以追蹤代碼行的執行頻率，或添加儀表 (gauges) 以追蹤變數隨時間變化的值。</p>
+                </article>
+
+                <article id="profiling">
+                    <h3>效能分析 (Profiling) (即將推出)</h3>
+                    <p>直接從 VS Code 按需生成 CPU 和記憶體分析報告。視覺化火焰圖 (flame graphs) 以識別瓶頸。</p>
+                </article>
+            </section>
+
+            <section id="faq">
+                <h2>常見問題 (FAQ)</h2>
+                <dl>
+                    <dt>它適用於優化後的二進制文件嗎？</dt>
+                    <dd>是的，CodeBull 支援優化後的二進制文件，儘管某些變數值可能會被優化掉。</dd>
+
+                    <dt>會有效能開銷嗎？</dt>
+                    <dd>僅在插樁點引入極小的開銷。當沒有啟用任何插樁點時，開銷為零。</dd>
+                </dl>
+            </section>
+        </div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 CodeBull. All rights reserved.</p>
+            <div class="links">
+                <a href="https://github.com/0xbu11/codebull-extension">GitHub</a>
+                <a href="#">Privacy</a>
+                <a href="#">Terms</a>
+            </div>
+        </div>
+    </footer>
+</body>
+
+</html>

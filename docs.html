@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeBull - Documentation</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <header>
+        <div class="container">
+            <div class="logo">
+                <a href="index.html">Code<span>Bull</span></a>
+            </div>
+            <div class="header-logo-center">
+                <a href="index.html"><img src="asset/codebull-logo.png" alt="CodeBull Logo"></a>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="index.html#features">Features</a></li>
+                    <li><a href="tutorial.html">Tutorial</a></li>
+                    <li><a href="docs.html" class="active">Docs</a></li>
+                    <li><a href="https://github.com/0xbu11/codebull-extension" target="_blank">GitHub</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main class="docs-container">
+        <aside class="docs-sidebar">
+            <nav>
+                <ul>
+                    <li><a href="#introduction">Introduction</a></li>
+                    <li><a href="#core-concepts">Core Concepts</a></li>
+                    <li><a href="#key-features">Key Features</a>
+                        <ul>
+                            <li><a href="#logging">Dynamic Logging</a></li>
+                            <li><a href="#metrics">Instant Metrics</a></li>
+                            <li><a href="#profiling">Profiling</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="#faq">FAQ</a></li>
+                </ul>
+                </ul>
+            </nav>
+            <div class="language-switcher"
+                style="margin-top: 2rem; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 1rem;">
+                <span style="color: var(--color-accent); font-weight: bold; font-size: 0.9rem;">English</span>
+                <span style="color: var(--color-text-secondary); margin: 0 0.5rem;">|</span>
+                <a href="docs_zh_TW.html" style="color: var(--color-text-secondary); font-size: 0.9rem;">中文</a>
+            </div>
+        </aside>
+        <div class="docs-content">
+            <section id="introduction">
+                <h1>Introduction to CodeBull</h1>
+                <p>CodeBull is a VS Code extension that brings <strong>dynamic observability</strong> to your Go
+                    applications. It allows developers to inject logs, metrics, and traces into a running application
+                    without rewriting code, rebuilding binary, or restarting the process.</p>
+                <p>Traditional debugging often involves adding print statements, recompiling, and restarting the app.
+                    CodeBull eliminates this friction by leveraging runtime instrumentation techniques.</p>
+            </section>
+
+            <section id="core-concepts">
+                <h2>Core Concepts</h2>
+                <div class="concept-card">
+                    <h3>Dynamic Instrumentation</h3>
+                    <p>The ability to modify the behavior of a running program by injecting code at specific points
+                        (e.g.,
+                        function entry/exit, specific lines). CodeBull uses this to insert observability hooks safely.
+                    </p>
+                </div>
+
+            </section>
+
+            <section id="key-features">
+                <h2>Key Features</h2>
+
+                <article id="logging">
+                    <h3>Dynamic Logging</h3>
+                    <p>Inject log statements anywhere in your code. Capture variable values, function arguments, and
+                        return values.</p>
+                    <div class="code-block">
+                        <pre><code>// Example: Log variable 'user' at line 42
+Log("User logged in: ", user.ID)</code></pre>
+                    </div>
+                </article>
+
+                <article id="metrics">
+                    <h3>Instant Metrics</h3>
+                    <p>Monitor the performance and behavior of your application in real-time. Add counters to track how
+                        often a line of code is executed, or gauges to track the value of a variable over time.</p>
+                </article>
+
+                <article id="profiling">
+                    <h3>Profiling (Coming Soon)</h3>
+                    <p>Generate CPU and memory profiles on-demand directly from VS Code. Visualize flame graphs to
+                        identify bottlenecks.</p>
+                </article>
+            </section>
+
+            <section id="faq">
+                <h2>FAQ</h2>
+                <dl>
+                    <dt>Does it work with optimized binaries?</dt>
+                    <dd>Yes, CodeBull supports optimized binaries, though some variable values might be optimized away.
+                    </dd>
+
+                    <dt>Is there a performance overhead?</dt>
+                    <dd>Minimal overhead is introduced only at the instrumentation points. When no points are active,
+                        overhead is zero.(Continuous improving)</dd>
+                </dl>
+            </section>
+        </div>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 CodeBull. All rights reserved.</p>
+            <div class="links">
+                <a href="https://github.com/0xbu11/codebull-extension">GitHub</a>
+                <a href="#">Privacy</a>
+                <a href="#">Terms</a>
+            </div>
+        </div>
+    </footer>
+</body>
+
+</html>
