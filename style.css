@@ -613,3 +613,9 @@ article {
     margin-bottom: 2rem;
   }
 }
+
+.code-block.has-image img {
+  width: 67%;
+  height: auto;
+  display: block;
+}
