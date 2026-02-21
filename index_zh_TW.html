@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeBull - 動態插樁解決方案</title>
+    <link rel="stylesheet" href="style.css?v=2">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;800&display=swap" rel="stylesheet">
+    <script src="theme.js"></script>
+</head>
+
+<body>
+    <header>
+        <div class="container">
+            <div class="logo">
+                Code<span>Bull</span>
+            </div>
+            <div class="header-logo-center">
+                <img src="asset/codebull-logo.png" alt="CodeBull Logo">
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="index_zh_TW.html#features">功能</a></li>
+                    <li><a href="tutorial_zh_TW.html">教學</a></li>
+                    <li><a href="docs_zh_TW.html">文件</a></li>
+                    <li><a href="https://github.com/0xbu11/codebull-extension" target="_blank">GitHub</a></li>
+                    <li><a href="index.html" class="lang-switch">English</a></li>
+                    <li><button id="theme-toggle" class="theme-toggle" aria-label="切換主題">☀️</button></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+                <h1>停止猜測。<br>開始檢視。<br>略過重建流程。</h1>
+                <p>專為 <span class="highlight-go">Go</span> 打造的動態可觀測性工具。直接從 VS Code 將日誌、指標和追蹤注入到正在執行的應用程式中。</p>
+                <a href="https://marketplace.visualstudio.com/items?itemName=0xbu11.codebull" class="btn">開始使用</a>
+            </div>
+        </section>
+
+        <section id="features" class="features">
+            <div class="container">
+                <h2>為什麼選擇 CodeBull？</h2>
+                <div class="grid">
+                    <div class="feature-card">
+                        <h3>動態日誌 (Dynamic Logging)</h3>
+                        <p>立即注入日誌語句以擷取變數值。獲取您需要的資料，而不會污染您的原始碼或弄亂 git 歷史紀錄。</p>
+                    </div>
+                    <div class="feature-card">
+                        <h3>即時指標 (Instant Metric)</h3>
+                        <p>立即將計數器和儀表附加到任何程式碼行。追蹤命中率和變數趨勢，無需定義全域變數或手動註冊指標。</p>
+                    </div>
+                    <div class="feature-card coming-soon">
+                        <span class="coming-soon-badge">即將推出</span>
+                        <h3>隨插即用的效能分析 (Plug and Play Profiling)</h3>
+                        <p>直接從 VS Code 開始和停止效能分析工作階段。分析執行階段效能，無需修改代碼或配置外部工具。</p>
+                    </div>
+                    <div class="feature-card coming-soon">
+                        <span class="coming-soon-badge">即將推出</span>
+                        <h3>無處不在的追蹤 (Tracing Everywhere)</h3>
+                        <p>動態注入追蹤。視覺化執行路徑並測量函數延遲，而無需修改任何一行代碼。</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 CodeBull. 保留所有權利。</p>
+            <div class="links">
+                <a href="https://github.com/0xbu11/codebull-extension">GitHub</a>
+                <a href="mailto:codebull.0xbu11@gmail.com">codebull.0xbu11@gmail.com</a>
+                <a href="#">隱私權政策</a>
+                <a href="#">服務條款</a>
+            </div>
+        </div>
+    </footer>
+</body>
+
+</html>

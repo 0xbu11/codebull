@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-TW">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CodeBull - Tutorial</title>
+    <title>CodeBull - 教學</title>
     <link rel="stylesheet" href="style.css?v=2">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,19 +16,19 @@
     <header>
         <div class="container">
             <div class="logo">
-                <a href="index.html">Code<span>Bull</span></a>
+                <a href="index_zh_TW.html">Code<span>Bull</span></a>
             </div>
             <div class="header-logo-center">
-                <a href="index.html"><img src="asset/codebull-logo.png" alt="CodeBull Logo"></a>
+                <a href="index_zh_TW.html"><img src="asset/codebull-logo.png" alt="CodeBull Logo"></a>
             </div>
             <nav>
                 <ul>
-                    <li><a href="index.html#features">Features</a></li>
-                    <li><a href="tutorial.html" class="active">Tutorial</a></li>
-                    <li><a href="docs.html">Docs</a></li>
+                    <li><a href="index_zh_TW.html#features">功能</a></li>
+                    <li><a href="tutorial_zh_TW.html" class="active">教學</a></li>
+                    <li><a href="docs_zh_TW.html">文件</a></li>
                     <li><a href="https://github.com/0xbu11/codebull-extension" target="_blank">GitHub</a></li>
-                    <li><a href="tutorial_zh_TW.html" class="lang-switch">中文</a></li>
-                    <li><button id="theme-toggle" class="theme-toggle" aria-label="Switch Theme">☀️</button></li>
+                    <li><a href="tutorial.html" class="lang-switch">English</a></li>
+                    <li><button id="theme-toggle" class="theme-toggle" aria-label="切換主題">☀️</button></li>
                 </ul>
             </nav>
         </div>
@@ -37,8 +37,8 @@
     <main>
         <section class="page-header">
             <div class="container">
-                <h1>Getting Started with CodeBull</h1>
-                <p>Follow this step-by-step guide to master dynamic instrumentation in VS Code.</p>
+                <h1>CodeBull 快速入門</h1>
+                <p>跟著這個循序漸進的指南，在 VS Code 中掌握動態插樁。</p>
             </div>
         </section>
 
@@ -49,9 +49,8 @@
                 <div class="step">
                     <div class="step-content">
                         <div class="step-number">01</div>
-                        <h2>Installation</h2>
-                        <p>Search for <strong>"CodeBull"</strong> in the VS Code Marketplace and click Install. Ensure
-                            you have a Go project open.</p>
+                        <h2>安裝</h2>
+                        <p>在 VS Code 擴充功能市場中搜尋 <strong>"CodeBull"</strong> 並點擊安裝。確保您已開啟一個 Go 專案。</p>
                     </div>
                     <div class="step-image has-image">
                         <img src="asset/step1.png" alt="Screenshot: Installation">
@@ -62,11 +61,9 @@
                 <div class="step">
                     <div class="step-content">
                         <div class="step-number">02</div>
-                        <h2>Injecting Logs</h2>
-                        <p>Open any Go file. You will see <strong>CodeLens</strong> actions above your functions. Click
-                            <strong>"Set Log"</strong> to inject a log point. The IDE will automatically track the next
-                            execution.
-                        </p>
+                        <h2>注入日誌</h2>
+                        <p>打開任何一個 Go 檔案。您將會在函數上方看到 <strong>CodeLens</strong> 動作。點擊 <strong>"Set Log"</strong>
+                            來注入一個日誌點。IDE 會自動追蹤下一次的執行。</p>
                     </div>
                     <div class="step-image has-image">
                         <img src="asset/step2.png" alt="Injecting Logs CodeLens">
@@ -77,9 +74,8 @@
                 <div class="step">
                     <div class="step-content">
                         <div class="step-number">03</div>
-                        <h2>Viewing Live Logs</h2>
-                        <p>Open the <strong>CodeBull Log</strong> panel. As your application runs, logs will stream in
-                            real-time without you having to rebuild or restart your app.</p>
+                        <h2>即時檢視日誌</h2>
+                        <p>打開 <strong>CodeBull Log</strong> 面板。當您的應用程式執行時，日誌將會即時串流顯示，您完全不需要重新編譯或重啟您的應用程式。</p>
                     </div>
                     <div class="step-image has-image">
                         <img src="asset/step3.png" alt="Screenshot: Log Panel">
@@ -90,11 +86,9 @@
                 <div class="step">
                     <div class="step-content">
                         <div class="step-number">04</div>
-                        <h2>Visualizing Metrics</h2>
-                        <p>Click <strong>"Set Metric"</strong> via CodeLens. Select a variable to track. Open the
-                            <strong>CodeBull Metric</strong> panel to see real-time graphs of the variable's value over
-                            time.
-                        </p>
+                        <h2>視覺化指標</h2>
+                        <p>透過 CodeLens 點擊 <strong>"Set Metric"</strong>。選擇一個要追蹤的變數。打開 <strong>CodeBull Metric</strong>
+                            面板即可看見該變數數值隨時間變化的即時圖表。</p>
                     </div>
                     <div class="step-image has-image">
                         <img src="asset/step4.png" alt="Screenshot: Metric Charts">
@@ -107,12 +101,12 @@
 
     <footer>
         <div class="container">
-            <p>&copy; 2026 CodeBull. All rights reserved.</p>
+            <p>&copy; 2026 CodeBull. 保留所有權利。</p>
             <div class="links">
                 <a href="https://github.com/0xbu11/codebull-extension">GitHub</a>
                 <a href="mailto:codebull.0xbu11@gmail.com">codebull.0xbu11@gmail.com</a>
-                <a href="#">Privacy</a>
-                <a href="#">Terms</a>
+                <a href="#">隱私權政策</a>
+                <a href="#">服務條款</a>
             </div>
         </div>
     </footer>
