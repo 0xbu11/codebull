@@ -69,6 +69,23 @@ a:hover {
   color: var(--color-accent);
 }
 
+/* Announcement Banner */
+.announcement-banner {
+  background-color: rgba(255, 193, 7, 0.1);
+  color: var(--color-accent);
+  text-align: center;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+  border-bottom: 1px solid rgba(255, 193, 7, 0.2);
+}
+
+[data-theme="light"] .announcement-banner {
+  background-color: rgba(160, 224, 58, 0.15);
+  color: #4a6e00;
+  border-bottom: 1px solid rgba(160, 224, 58, 0.3);
+}
+
 /* Layout */
 .container {
   max-width: var(--max-width);

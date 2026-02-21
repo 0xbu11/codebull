@@ -13,6 +13,9 @@
 </head>
 
 <body>
+    <div class="announcement-banner">
+        目前僅支援 Go V1.22.0 版本。
+    </div>
     <header>
         <div class="container">
             <div class="logo">
@@ -26,6 +29,7 @@
                     <li><a href="index_zh_TW.html#features">功能</a></li>
                     <li><a href="tutorial_zh_TW.html" class="active">教學</a></li>
                     <li><a href="docs_zh_TW.html">文件</a></li>
+                    <li><a href="roadmap_zh_TW.html">發展藍圖</a></li>
                     <li><a href="https://github.com/0xbu11/codebull-extension" target="_blank">GitHub</a></li>
                     <li><a href="tutorial.html" class="lang-switch">English</a></li>
                     <li><button id="theme-toggle" class="theme-toggle" aria-label="切換主題">☀️</button></li>
@@ -51,6 +55,35 @@
                         <div class="step-number">01</div>
                         <h2>安裝</h2>
                         <p>在 VS Code 擴充功能市場中搜尋 <strong>"CodeBull"</strong> 並點擊安裝。確保您已開啟一個 Go 專案。</p>
+                        <br>
+                        <p>在你的 Go 專案中加入匯入：</p>
+                        <pre class="code-block">import (
+    _ "github.com/0xbu11/codebull"
+)</pre>
+                        <h3>伺服器配置</h3>
+                        <p>監聽位址可以透過以下三種方式配置：</p>
+                        <ol>
+                            <li>使用明確的位址呼叫 <code>shadow.Start(addr)</code> (例如 <code>:9000</code> 或
+                                <code>127.0.0.1:9000</code>)。
+                            </li>
+                            <li>設定 <code>EGO_SHADOW_ADDR</code> (完整的監聽位址)。</li>
+                            <li>設定 <code>EGO_SHADOW_PORT</code> (僅連接埠，例如 <code>9000</code>)。</li>
+                        </ol>
+                        <p>優先順序為：</p>
+                        <p><code>shadow.Start(addr)</code> (明確位址) &gt; <code>EGO_SHADOW_ADDR</code> &gt;
+                            <code>EGO_SHADOW_PORT</code> &gt; 預設 <code>:8888</code>。
+                        </p>
+                        <p>注意事項：</p>
+                        <ul>
+                            <li><code>EGO_SHADOW_PORT</code> 必須是有效的數字連接埠 (<code>1</code>-<code>65535</code>)，否則將退回使用
+                                <code>:8888</code>。
+                            </li>
+                            <li><code>EGO_SHADOW_ADDR</code> 可以是 <code>127.0.0.1:9000</code> 或 <code>:9000</code>。</li>
+                        </ul>
+                        <ul>
+                            <li><strong>Base URL</strong>: <code>http://localhost:8888</code></li>
+                            <li><strong>WebSocket URL</strong>: <code>ws://localhost:8888</code></li>
+                        </ul>
                     </div>
                     <div class="step-image has-image">
                         <img src="asset/step1.png" alt="Screenshot: Installation">
@@ -62,7 +95,7 @@
                     <div class="step-content">
                         <div class="step-number">02</div>
                         <h2>注入日誌</h2>
-                        <p>打開任何一個 Go 檔案。您將會在函數上方看到 <strong>CodeLens</strong> 動作。點擊 <strong>"Set Log"</strong>
+                        <p>打開任何一個 Go 檔案。您將會在函數或是行的上方看到 <strong>CodeLens</strong> 動作。點擊 <strong>"Set Log"</strong>
                             來注入一個日誌點。IDE 會自動追蹤下一次的執行。</p>
                     </div>
                     <div class="step-image has-image">
