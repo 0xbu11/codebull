@@ -94,8 +94,8 @@ If this project helps you, a small donation goes a long way—help fund the next
 
 - Address: `XKO6286115da50b9ee07a85d700b72600648e3c4c8f`
 
-![Donate QR](usdt_wallet.png)
+<img src="usdt_wallet.png" alt="Donate QR" width="260" />
 
 <a href="https://www.buymeacoffee.com/backman">
-    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" width="180" />
+    <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" width="150" />
 </a>
