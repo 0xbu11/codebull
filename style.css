@@ -100,17 +100,16 @@ header {
 }
 
 header .container {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   position: relative;
+  gap: 1rem;
 }
 
 .header-logo-center {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
+  display: flex;
+  justify-content: center;
 }
 
 .header-logo-center img {
@@ -133,7 +132,8 @@ header .container {
 nav ul {
   list-style: none;
   display: flex;
-  gap: 2rem;
+  justify-content: flex-end;
+  gap: 1.5rem;
   margin: 0;
   padding: 0;
 }
@@ -696,4 +696,91 @@ article {
   display: block;
 }
 
-/* Force Refresh */
+/* Donate Page */
+.donate-section {
+  padding: 1.5rem 0;
+  text-align: center;
+}
+
+.donate-container {
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.donate-section h2 {
+  font-size: 1.4rem;
+  margin-bottom: 0.25rem;
+}
+
+.donate-section p {
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.donate-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 1rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.donate-card h3 {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  color: var(--color-accent);
+}
+
+.donate-qr {
+  width: 180px;
+  height: auto;
+  margin: 0.5rem auto;
+  display: block;
+  border-radius: 6px;
+  border: 2px solid #fff;
+}
+
+[data-theme="light"] .donate-qr {
+  border-color: #f5f5f5;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+}
+
+.wallet-address-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  padding: 0.5rem;
+  border-radius: 6px;
+  margin-top: 0.75rem;
+}
+
+.wallet-address {
+  font-family: 'Fira Code', monospace;
+  font-size: 0.7rem;
+  color: var(--color-text);
+  word-break: break-all;
+  flex: 1;
+  text-align: left;
+}
+
+.copy-btn {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  padding: 0.3rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.75rem;
+  transition: all 0.2s;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.copy-btn:hover {
+  background: var(--color-border);
+  color: var(--color-accent);
+}
