@@ -87,3 +87,13 @@ See [API.md](API.md) for details on the HTTP and WebSocket endpoints for control
 
 - Go 1.22+
 - Linux (for current build scripts and Ptrace usage)
+
+## Donate
+
+If this project helps you, a small donation goes a long way—help fund the next feature.
+
+- Address: `XKO6286115da50b9ee07a85d700b72600648e3c4c8f`
+
+![Donate QR](donate_qr.png)
+
+[![Buy me a coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://www.buymeacoffee.com/backman)
