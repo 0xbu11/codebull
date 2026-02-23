@@ -11,6 +11,8 @@ import (
 	"math"
 	"reflect"
 	"unsafe"
+
+	"github.com/0xbu11/codebull/pkg/debugflag"
 )
 
 const (
@@ -248,7 +250,7 @@ func (v *Variable) LoadValueInternal(depth int) {
 		locStr = fmt.Sprintf("LocList[%d]", len(v.LocList))
 	}
 
-	fmt.Printf("DEBUG EVAL: LoadValueInternal %s Kind: %v Addr: 0x%x Loc: %s\n", v.Name, v.Kind, v.Addr, locStr)
+	debugflag.Printf("DEBUG EVAL: LoadValueInternal %s Kind: %v Addr: 0x%x Loc: %s", v.Name, v.Kind, v.Addr, locStr)
 
 	switch v.Kind {
 	case reflect.Ptr:

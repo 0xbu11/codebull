@@ -154,16 +154,18 @@ func HarvestPoint(regs *OnStackRegisters) {
 		return
 	}
 
-	fmt.Printf("DEBUG REGS: PC=0x%x SP=0x%x RAX=0x%x RBP=0x%x OldRBP=0x%x\n", pc, regs.SP(), regs.RAX, regs.BP(), regs.OldRBP)
-	fmt.Printf("STACK DUMP FROM SP:\n")
-	sp := regs.SP()
-	for i := -2; i < 30; i++ {
-		addr := sp + uint64(i*8)
-		val := *(*uint64)(unsafe.Pointer(uintptr(addr)))
-		if val == regs.RAX || val == 1000000000 {
-			fmt.Printf("  *[SP+%3d] 0x%x = %d (MATCH!)\n", i*8, addr, val)
-		} else {
-			fmt.Printf("   [SP+%3d] 0x%x = %d\n", i*8, addr, val)
+	if debugflag.Enabled() {
+		debugflag.Printf("DEBUG REGS: PC=0x%x SP=0x%x RAX=0x%x RBP=0x%x OldRBP=0x%x", pc, regs.SP(), regs.RAX, regs.BP(), regs.OldRBP)
+		debugflag.Println("STACK DUMP FROM SP:")
+		sp := regs.SP()
+		for i := -2; i < 30; i++ {
+			addr := sp + uint64(i*8)
+			val := *(*uint64)(unsafe.Pointer(uintptr(addr)))
+			if val == regs.RAX || val == 1000000000 {
+				debugflag.Printf("  *[SP+%3d] 0x%x = %d (MATCH!)", i*8, addr, val)
+			} else {
+				debugflag.Printf("   [SP+%3d] 0x%x = %d", i*8, addr, val)
+			}
 		}
 	}
 
@@ -210,7 +212,7 @@ func HarvestPoint(regs *OnStackRegisters) {
 
 
 
-	fmt.Printf("DEBUG FRAMEBASE: PC=0x%x SP=0x%x StackFrameSize=0x%x spDelta=%d frameBase=0x%x\n", pc, regs.SP(), fnInfo.StackFrameSize, spDelta, frameBase)
+	debugflag.Printf("DEBUG FRAMEBASE: PC=0x%x SP=0x%x StackFrameSize=0x%x spDelta=%d frameBase=0x%x", pc, regs.SP(), fnInfo.StackFrameSize, spDelta, frameBase)
 
 	trace := make(map[string]uint64)
 

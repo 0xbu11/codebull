@@ -6,6 +6,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+
+	"github.com/0xbu11/codebull/pkg/debugflag"
 )
 
 const (
@@ -171,7 +173,7 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 		return 0, fmt.Errorf("empty location")
 	}
 
-	fmt.Printf("DEBUG EVAL: Evaluate Variable %s PC=0x%x frameBase=0x%x MatchedLocExpr=(%x)\n", v.Name, currPC, frameBase, locExpr)
+	debugflag.Printf("DEBUG EVAL: Evaluate Variable %s PC=0x%x frameBase=0x%x MatchedLocExpr=(%x)", v.Name, currPC, frameBase, locExpr)
 
 	buf := bytes.NewBuffer(locExpr)
 	var stack []uint64
