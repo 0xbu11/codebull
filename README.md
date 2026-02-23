@@ -78,11 +78,6 @@ go build \
 
 ./demo_bin
 ```
-
-## API Documentation
-
-See [API.md](API.md) for details on the HTTP and WebSocket endpoints for controlling traces and receiving data.
-
 ## Requirements
 
 - Go 1.22+
