@@ -58,9 +58,16 @@ func unblockGC() {
 
 type collectMessage struct {
 	regs harvest.OnStackRegisters
-	done chan struct{} // if non-nil, close when processing finishes
 }
 
+//go:nosplit
+func ensureCollectorWorkerStarted() {
+	systemstack(func() {
+		collectOnce.Do(startCollectorWorker)
+	})
+}
+
+//go:nosplit
 func startCollectorWorker() {
 	collectCh = make(chan collectMessage, 1024)
 	go func() {
@@ -73,27 +80,28 @@ func startCollectorWorker() {
 				}()
 				harvestFn(&msg.regs)
 			}()
-			if msg.done != nil {
-				close(msg.done)
-			}
 		}
 	}()
 }
 
+//go:nosplit
 func Handler(regs *harvest.OnStackRegisters) {
+	ensureCollectorWorkerStarted()
+
 	regs.RSP_Dummy = uint64(uintptr(unsafe.Pointer(&regs.OldRBP))) + 8
 
-	collectOnce.Do(startCollectorWorker)
 	snapshot := *regs
-	done := make(chan struct{})
+
 	blockGC()
 	defer unblockGC()
-	collectCh <- collectMessage{regs: snapshot, done: done}
-	<-done
+	select {
+	case collectCh <- collectMessage{regs: snapshot}:
+	default:
+	}
 }
 
 func enqueueCollect(regs *harvest.OnStackRegisters) {
-	collectOnce.Do(startCollectorWorker)
+	ensureCollectorWorkerStarted()
 	snapshot := *regs
 	select {
 	case collectCh <- collectMessage{regs: snapshot}:
