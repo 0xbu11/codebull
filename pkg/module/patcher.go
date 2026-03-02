@@ -4,16 +4,22 @@ package module
 
 import (
 	"fmt"
+	"os"
+	"runtime"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"unsafe"
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
+	"golang.org/x/arch/x86/x86asm"
 )
 
 const (
 	shieldMagic		= 0xDEADBEEF
-	maxMappingEntries	= 500
+	maxMappingEntries	= 65535
+	maxTrampolineEntries	= 65535
 	shieldBaseOffset	= 64
 	funcEndPadding		= 16
 	ptrSize			= 8
@@ -107,8 +113,8 @@ func getTrampolines(base uintptr, mappingCount uint32) []TrampolineInfo {
 	shieldBase := base + shieldBaseOffset
 	trampBase := shieldBase + 8 + uintptr(mappingCount)*8
 	count := *(*uint32)(unsafe.Pointer(trampBase))
-	if count > 100 {
-		count = 100
+	if count > maxTrampolineEntries {
+		count = maxTrampolineEntries
 	}
 	trampolines := make([]TrampolineInfo, count)
 	for i := uint32(0); i < count; i++ {
@@ -136,7 +142,7 @@ func PatchModule(origEntry uint64, newEntry, newEnd uint64, prologueShift int) e
 	mapping, mappingCount := getPCMapping(uintptr(newEntry))
 	trampolines := getTrampolines(uintptr(newEntry), mappingCount)
 
-	newPcln, funcOffset, err := createPclnTable(*origFunc, delta, mapping, trampolines, newSize, prologueShift)
+	newPcln, funcOffset, err := createPclnTable(*origFunc, delta, mapping, trampolines, newSize, prologueShift, uintptr(newEntry))
 	if err != nil {
 		return err
 	}
@@ -349,7 +355,7 @@ func safePCDataValue1(f funcInfo, table uint32, pc uintptr) (value int32, err er
 	return value, nil
 }
 
-func createPclnTable(origFunc funcInfo, delta int64, mapping []pcMapEntry, trampolines []TrampolineInfo, newSize uint32, prologueShift int) ([]byte, uintptr, error) {
+func createPclnTable(origFunc funcInfo, delta int64, mapping []pcMapEntry, trampolines []TrampolineInfo, newSize uint32, prologueShift int, newEntry uintptr) ([]byte, uintptr, error) {
 	var newTablesData []byte
 	newTablesData = append(newTablesData, 0)
 
@@ -375,20 +381,20 @@ func createPclnTable(origFunc funcInfo, delta int64, mapping []pcMapEntry, tramp
 		if i == _PCDATA_UnsafePoint {
 			strat = InjectUnsafe
 		}
-		oldBytes := readPclnBytes(origFunc.datap, offset, mapping, trampolines, newSize, prologueShift, strat, origFunc._func.entryOff)
+		oldBytes := readPclnBytes(origFunc.datap, offset, mapping, trampolines, newSize, prologueShift, strat, origFunc._func.entryOff, newEntry)
 		newPcDataOffsets[i] = uint32(len(newTablesData))
 		newTablesData = append(newTablesData, oldBytes...)
 	}
 
-	pcspBytes := readPclnBytes(origFunc.datap, origFunc._func.pcsp, mapping, trampolines, newSize, prologueShift, InjectStackDelta, origFunc._func.entryOff)
+	pcspBytes := readPclnBytes(origFunc.datap, origFunc._func.pcsp, mapping, trampolines, newSize, prologueShift, InjectStackDelta, origFunc._func.entryOff, newEntry)
 	newPcspOffset := uint32(len(newTablesData))
 	newTablesData = append(newTablesData, pcspBytes...)
 
-	pcfileBytes := readPclnBytes(origFunc.datap, origFunc._func.pcfile, mapping, trampolines, newSize, prologueShift, InjectNone, origFunc._func.entryOff)
+	pcfileBytes := readPclnBytes(origFunc.datap, origFunc._func.pcfile, mapping, trampolines, newSize, prologueShift, InjectNone, origFunc._func.entryOff, newEntry)
 	newPcfileOffset := uint32(len(newTablesData))
 	newTablesData = append(newTablesData, pcfileBytes...)
 
-	pclnBytes := readPclnBytes(origFunc.datap, origFunc._func.pcln, mapping, trampolines, newSize, prologueShift, InjectNone, origFunc._func.entryOff)
+	pclnBytes := readPclnBytes(origFunc.datap, origFunc._func.pcln, mapping, trampolines, newSize, prologueShift, InjectNone, origFunc._func.entryOff, newEntry)
 	newPclnOffset := uint32(len(newTablesData))
 	newTablesData = append(newTablesData, pclnBytes...)
 
@@ -419,12 +425,13 @@ func createPclnTable(origFunc funcInfo, delta int64, mapping []pcMapEntry, tramp
 	return newTablesData, funcOffset, nil
 }
 
-func readPclnBytes(datap *moduledata, offset uint32, mapping []pcMapEntry, trampolines []TrampolineInfo, newSize uint32, prologueShift int, strategy InjectionStrategy, funcEntryOff uint32) []byte {
+func readPclnBytes(datap *moduledata, offset uint32, mapping []pcMapEntry, trampolines []TrampolineInfo, newSize uint32, prologueShift int, strategy InjectionStrategy, funcEntryOff uint32, newEntry uintptr) []byte {
 	if offset == 0 || offset == 0xFFFFFFFF {
 		return nil
 	}
 	src := datap.pctab[offset:]
 	entries := decodePCDataEntries(src)
+	origEntries := append([]PCDataEntry(nil), entries...)
 
 	if len(mapping) > 0 && len(entries) > 0 {
 		for i := range entries {
@@ -459,7 +466,53 @@ func readPclnBytes(datap *moduledata, offset uint32, mapping []pcMapEntry, tramp
 	applyTrampolines := len(trampolines) > 0 && len(entries) > 0
 
 	if applyTrampolines {
-		var newEntries []PCDataEntry
+		type entrySource uint8
+		const (
+			sourceOriginal	entrySource	= iota
+			sourceTrampStart
+			sourceTrampEnd
+			sourceTrampBody
+		)
+		type stagedEntry struct {
+			Offset	uintptr
+			Value	int32
+			Source	entrySource
+			Order	int
+		}
+
+		sourceName := func(s entrySource) string {
+			switch s {
+			case sourceTrampStart:
+				return "tramp_start"
+			case sourceTrampEnd:
+				return "tramp_end"
+			case sourceTrampBody:
+				return "tramp_body"
+			default:
+				return "original"
+			}
+		}
+
+		sourcePriority := func(s entrySource) int {
+			switch s {
+			case sourceTrampStart:
+				return 40
+			case sourceTrampBody:
+				return 38
+			case sourceTrampEnd:
+				return 35
+			default:
+				return 10
+			}
+		}
+
+		var staged []stagedEntry
+		orderCounter := 0
+		appendStaged := func(offset uintptr, value int32, source entrySource) {
+			staged = append(staged, stagedEntry{Offset: offset, Value: value, Source: source, Order: orderCounter})
+			orderCounter++
+		}
+
 		entIdx := 0
 		for tIdx := range trampolines {
 			t := trampolines[tIdx]
@@ -470,7 +523,7 @@ func readPclnBytes(datap *moduledata, offset uint32, mapping []pcMapEntry, tramp
 				if strategy == InjectInvalid {
 					e.Value = -1
 				}
-				newEntries = append(newEntries, e)
+				appendStaged(e.Offset, e.Value, sourceOriginal)
 				entIdx++
 			}
 			var valStart int32 = -1
@@ -488,19 +541,24 @@ func readPclnBytes(datap *moduledata, offset uint32, mapping []pcMapEntry, tramp
 				}
 				valEnd = entries[j].Value
 			}
-			var bodyVal int32
 			if strategy == InjectStackDelta {
-				bodyVal = valStart + int32(t.StackDelta)
+				if rebuilt, ok := rebuildPCSPForTrampoline(newEntry, t, valStart, valEnd); ok && len(rebuilt) > 0 {
+					for _, e := range rebuilt {
+						appendStaged(e.Offset, e.Value, sourceTrampBody)
+					}
+				} else {
+					bodyVal := valStart + int32(t.StackDelta)
+					appendStaged(tStart, bodyVal, sourceTrampStart)
+					appendStaged(tEnd, valEnd, sourceTrampEnd)
+				}
 			} else if strategy == InjectInvalid {
-				bodyVal = -1
+				appendStaged(tStart, -1, sourceTrampStart)
+				appendStaged(tEnd, valEnd, sourceTrampEnd)
 			} else if strategy == InjectUnsafe {
-				bodyVal = -2
+				appendStaged(tStart, -2, sourceTrampStart)
+				appendStaged(tEnd, valEnd, sourceTrampEnd)
 			} else {
-				bodyVal = valStart
-			}
-			newEntries = append(newEntries, PCDataEntry{Offset: tStart, Value: bodyVal})
-			if strategy != InjectNone {
-				newEntries = append(newEntries, PCDataEntry{Offset: tEnd, Value: valEnd})
+				appendStaged(tStart, valStart, sourceTrampStart)
 			}
 			for entIdx < len(entries) && entries[entIdx].Offset < tEnd {
 				entIdx++
@@ -511,21 +569,43 @@ func readPclnBytes(datap *moduledata, offset uint32, mapping []pcMapEntry, tramp
 			if strategy == InjectInvalid {
 				e.Value = -1
 			}
-			newEntries = append(newEntries, e)
+			appendStaged(e.Offset, e.Value, sourceOriginal)
 			entIdx++
 		}
-		entries = newEntries
-		sort.SliceStable(entries, func(i, j int) bool { return entries[i].Offset < entries[j].Offset })
-		if len(entries) > 0 {
-			res := entries[:0]
-			for i := 0; i < len(entries); i++ {
-				if i+1 < len(entries) && entries[i+1].Offset == entries[i].Offset {
-					continue
-				}
-				res = append(res, entries[i])
+
+		sort.SliceStable(staged, func(i, j int) bool {
+			if staged[i].Offset == staged[j].Offset {
+				return staged[i].Order < staged[j].Order
 			}
-			entries = res
+			return staged[i].Offset < staged[j].Offset
+		})
+
+		merged := make([]PCDataEntry, 0, len(staged))
+		if len(staged) > 0 {
+			i := 0
+			for i < len(staged) {
+				j := i + 1
+				winner := staged[i]
+				for j < len(staged) && staged[j].Offset == staged[i].Offset {
+					cand := staged[j]
+					candPri := sourcePriority(cand.Source)
+					winnerPri := sourcePriority(winner.Source)
+					if candPri > winnerPri || (candPri == winnerPri && cand.Order > winner.Order) {
+						winner = cand
+					}
+					j++
+				}
+
+				if j-i > 1 && debugflag.Enabled() {
+					debugflag.Printf("PATCHER: pcdata offset collision at off=0x%x, group=%d winner=%s val=%d", winner.Offset, j-i, sourceName(winner.Source), winner.Value)
+				}
+
+				merged = append(merged, PCDataEntry{Offset: winner.Offset, Value: winner.Value})
+				i = j
+			}
 		}
+
+		entries = merged
 	}
 
 	if len(entries) > 0 {
@@ -535,8 +615,223 @@ func readPclnBytes(datap *moduledata, offset uint32, mapping []pcMapEntry, tramp
 		}
 	}
 
+	if strategy == InjectStackDelta {
+		debugPCSPAtOffset(entries, origEntries, mapping, trampolines, newSize, funcEntryOff)
+	}
+
 	encoded, _ := encodePCDataEntries(entries)
 	return encoded
+}
+
+func rebuildPCSPForTrampoline(newEntry uintptr, tramp TrampolineInfo, startValue int32, endValue int32) ([]PCDataEntry, bool) {
+	if runtime.GOARCH != "amd64" {
+		return nil, false
+	}
+	if newEntry == 0 || tramp.EndOffset <= tramp.StartOffset {
+		return nil, false
+	}
+
+	start := uintptr(tramp.StartOffset)
+	end := uintptr(tramp.EndOffset)
+	base := newEntry + start
+	regionLen := int(end - start)
+	if regionLen <= 0 {
+		return nil, false
+	}
+
+	var code []byte
+	func() {
+		defer func() {
+			if recover() != nil {
+				code = nil
+			}
+		}()
+		code = unsafe.Slice((*byte)(unsafe.Pointer(base)), regionLen)
+	}()
+	if len(code) == 0 {
+		return nil, false
+	}
+
+	entries := make([]PCDataEntry, 0, 8)
+	entries = append(entries, PCDataEntry{Offset: start, Value: startValue})
+	current := startValue
+	off := 0
+	for off < len(code) {
+		inst, err := x86asm.Decode(code[off:], 64)
+		if err != nil || inst.Len <= 0 {
+			return nil, false
+		}
+		delta := amd64StackDelta(inst)
+		next := current + int32(delta)
+		if next != current {
+			entries = append(entries, PCDataEntry{Offset: start + uintptr(off) + uintptr(inst.Len), Value: current})
+			current = next
+		}
+		off += inst.Len
+	}
+
+	entries = append(entries, PCDataEntry{Offset: end, Value: endValue})
+	return compactPCDataEntries(entries), true
+}
+
+func amd64StackDelta(inst x86asm.Inst) int {
+	op := inst.Op.String()
+	if strings.HasPrefix(op, "PUSH") {
+		return ptrSize
+	}
+	if strings.HasPrefix(op, "POP") {
+		return -ptrSize
+	}
+
+	if op == "SUB" {
+		if reg, ok := inst.Args[0].(x86asm.Reg); ok && (reg == x86asm.RSP || reg == x86asm.ESP) {
+			if imm, ok := x86Imm(inst.Args[1]); ok {
+				return int(imm)
+			}
+		}
+	}
+	if op == "ADD" {
+		if reg, ok := inst.Args[0].(x86asm.Reg); ok && (reg == x86asm.RSP || reg == x86asm.ESP) {
+			if imm, ok := x86Imm(inst.Args[1]); ok {
+				return -int(imm)
+			}
+		}
+	}
+	if op == "LEAVE" {
+		return -ptrSize
+	}
+	if strings.HasPrefix(op, "RET") {
+		if imm, ok := x86Imm(inst.Args[0]); ok {
+			return -ptrSize - int(imm)
+		}
+		return -ptrSize
+	}
+
+	return 0
+}
+
+func x86Imm(arg x86asm.Arg) (int64, bool) {
+	imm, ok := arg.(x86asm.Imm)
+	if !ok {
+		return 0, false
+	}
+	return int64(imm), true
+}
+
+func compactPCDataEntries(entries []PCDataEntry) []PCDataEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	compacted := make([]PCDataEntry, 0, len(entries))
+	for _, e := range entries {
+		if len(compacted) == 0 {
+			compacted = append(compacted, e)
+			continue
+		}
+		last := compacted[len(compacted)-1]
+		if last.Offset == e.Offset {
+			compacted[len(compacted)-1] = e
+			continue
+		}
+		if last.Value == e.Value {
+			continue
+		}
+		compacted = append(compacted, e)
+	}
+	return compacted
+}
+
+func debugPCSPAtOffset(entries []PCDataEntry, origEntries []PCDataEntry, mapping []pcMapEntry, trampolines []TrampolineInfo, newSize uint32, funcEntryOff uint32) {
+	if os.Getenv("EGO_SHADOW_DEBUG_PCSP") != "1" {
+		return
+	}
+
+	raw := os.Getenv("EGO_SHADOW_DEBUG_PCSP_OFF")
+	if raw == "" {
+		debugflag.Printf("PATCHER: pcsp debug enabled, set EGO_SHADOW_DEBUG_PCSP_OFF to inspect target offset (entryOff=0x%x size=0x%x entries=%d trampolines=%d)", funcEntryOff, newSize, len(entries), len(trampolines))
+		return
+	}
+
+	target, err := strconv.ParseUint(raw, 0, 64)
+	if err != nil {
+		debugflag.Printf("PATCHER: invalid EGO_SHADOW_DEBUG_PCSP_OFF=%q: %v", raw, err)
+		return
+	}
+	targetOff := uintptr(target)
+
+	value := int32(-1)
+	activeEntryIdx := -1
+	for i := 0; i < len(entries); i++ {
+		if entries[i].Offset > targetOff {
+			break
+		}
+		value = entries[i].Value
+		activeEntryIdx = i
+	}
+
+	trampMsg := "none"
+	for i := range trampolines {
+		t := trampolines[i]
+		start := uintptr(t.StartOffset)
+		end := uintptr(t.EndOffset)
+		if targetOff >= start && targetOff < end {
+			trampMsg = fmt.Sprintf("idx=%d [0x%x,0x%x) delta=%d", i, t.StartOffset, t.EndOffset, t.StackDelta)
+			break
+		}
+	}
+
+	debugflag.Printf("PATCHER: pcsp probe targetOff=0x%x value=%d entryIdx=%d entryOff=0x%x size=0x%x tramp=%s", targetOff, value, activeEntryIdx, funcEntryOff, newSize, trampMsg)
+
+	origOff := uint32(0)
+	origMapped := false
+	if len(mapping) > 0 {
+		for j := len(mapping) - 1; j >= 0; j-- {
+			m := mapping[j]
+			if uint32(targetOff) >= m.New {
+				origOff = m.Orig + (uint32(targetOff) - m.New)
+				origMapped = true
+				break
+			}
+		}
+	}
+
+	origVal := int32(-1)
+	origIdx := -1
+	if len(origEntries) > 0 {
+		probeOrigOff := targetOff
+		if origMapped {
+			probeOrigOff = uintptr(origOff)
+		}
+		for i := 0; i < len(origEntries); i++ {
+			if origEntries[i].Offset > probeOrigOff {
+				break
+			}
+			origVal = origEntries[i].Value
+			origIdx = i
+		}
+	}
+
+	if origMapped {
+		debugflag.Printf("PATCHER: pcsp inverse-map targetOff=0x%x -> origOff=0x%x origVal=%d origIdx=%d", targetOff, origOff, origVal, origIdx)
+	} else {
+		debugflag.Printf("PATCHER: pcsp inverse-map targetOff=0x%x -> no mapping lower-bound (origVal=%d origIdx=%d)", targetOff, origVal, origIdx)
+	}
+
+	if len(entries) == 0 {
+		return
+	}
+
+	startIdx := activeEntryIdx - 2
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	endIdx := activeEntryIdx + 2
+	if endIdx >= len(entries) {
+		endIdx = len(entries) - 1
+	}
+	for i := startIdx; i <= endIdx; i++ {
+		debugflag.Printf("PATCHER: pcsp entry[%d] off=0x%x val=%d", i, entries[i].Offset, entries[i].Value)
+	}
 }
 
 func createFindFuncBucket(md *moduledata) error {

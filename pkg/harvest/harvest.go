@@ -48,6 +48,10 @@ func SetOnReport(fn func(ReportData)) {
 	OnReport = fn
 }
 
+func init() {
+	loadOnce.Do(initLocator)
+}
+
 func initLocator() {
 	var err error
 	varLocator, err = function.NewLocatorForSelf()
