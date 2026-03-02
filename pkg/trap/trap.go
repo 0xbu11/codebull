@@ -6,6 +6,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 	_ "unsafe" // For linkname
 
@@ -58,13 +59,12 @@ func unblockGC() {
 
 type collectMessage struct {
 	regs harvest.OnStackRegisters
+	done *uint32
 }
 
 //go:nosplit
 func ensureCollectorWorkerStarted() {
-	systemstack(func() {
-		collectOnce.Do(startCollectorWorker)
-	})
+	collectOnce.Do(startCollectorWorker)
 }
 
 //go:nosplit
@@ -77,6 +77,9 @@ func startCollectorWorker() {
 					if r := recover(); r != nil {
 						recoverFn(r)
 					}
+					if msg.done != nil {
+						atomic.StoreUint32(msg.done, 1)
+					}
 				}()
 				harvestFn(&msg.regs)
 			}()
@@ -86,25 +89,38 @@ func startCollectorWorker() {
 
 //go:nosplit
 func Handler(regs *harvest.OnStackRegisters) {
-	ensureCollectorWorkerStarted()
-
-	regs.RSP_Dummy = uint64(uintptr(unsafe.Pointer(&regs.OldRBP))) + 8
-
-	snapshot := *regs
-
-	blockGC()
-	defer unblockGC()
-	select {
-	case collectCh <- collectMessage{regs: snapshot}:
-	default:
+	if regs == nil {
+		return
 	}
+	blockGC()
+	snapshot := *regs
+	snapshot.RSP_Dummy = uint64(uintptr(unsafe.Pointer(&regs.OldRBP))) + 8
+
+	waitChan := make(chan struct{})
+
+	defer unblockGC()
+
+	systemstack(func() {
+		go func(snapshot harvest.OnStackRegisters) {
+			defer func() {
+				if r := recover(); r != nil {
+					recoverFn(r)
+				}
+				waitChan <- struct{}{}
+			}()
+			harvestFn(&snapshot)
+		}(snapshot)
+	})
+
+	<-waitChan
 }
 
 func enqueueCollect(regs *harvest.OnStackRegisters) {
 	ensureCollectorWorkerStarted()
 	snapshot := *regs
+	snapshot.RSP_Dummy = uint64(uintptr(unsafe.Pointer(&regs.OldRBP))) + 8
 	select {
-	case collectCh <- collectMessage{regs: snapshot}:
+	case collectCh <- collectMessage{regs: snapshot, done: nil}:
 	default:
 	}
 }

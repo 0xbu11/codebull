@@ -6,6 +6,7 @@ import (
 	"debug/elf"
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"unsafe"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/0xbu11/codebull/pkg/codebull"
 	"github.com/0xbu11/codebull/pkg/suspension"
 	"github.com/0xbu11/codebull/pkg/variable"
+	"golang.org/x/arch/x86/x86asm"
 )
 
 type InstrumentType int
@@ -36,6 +38,42 @@ func (t InstrumentType) String() string {
 	default:
 		return "Unknown"
 	}
+}
+
+func hasSelfRecursiveCall(fn *function.Function) bool {
+	if fn == nil || fn.End <= fn.Entry {
+		return false
+	}
+
+	sz := int(fn.End - fn.Entry)
+	code := (*[1 << 30]byte)(unsafe.Pointer(uintptr(fn.Entry)))[:sz:sz]
+	for off := uint64(0); off < uint64(len(code)); {
+		inst, err := x86asm.Decode(code[int(off):], 64)
+		if err != nil || inst.Len <= 0 {
+			off++
+			continue
+		}
+
+		instBytes := code[int(off) : int(off)+inst.Len]
+		if len(instBytes) >= 5 && instBytes[0] == 0xE8 {
+			rel := int32(instBytes[1]) | int32(instBytes[2])<<8 | int32(instBytes[3])<<16 | int32(instBytes[4])<<24
+			target := uintptr(fn.Entry+off) + uintptr(inst.Len) + uintptr(int64(rel))
+			if target >= uintptr(fn.Entry) && target < uintptr(fn.End) {
+				if rf := runtime.FuncForPC(target); rf != nil && rf.Name() == fn.Name {
+					return true
+				}
+			}
+		}
+
+		off += uint64(inst.Len)
+	}
+
+	return false
+}
+
+func allowRecursiveInstrumentation() bool {
+	v := os.Getenv("EGO_SHADOW_ALLOW_RECURSIVE")
+	return v == "1" || v == "true" || v == "TRUE"
 }
 
 type PointStatus int
@@ -299,12 +337,16 @@ func (m *Manager) CreatePoint(fileName, functionName string, line int, types []I
 		m.functions[functionName] = fn
 	}
 
+	if hasSelfRecursiveCall(fn) && !allowRecursiveInstrumentation() {
+		return fmt.Errorf("function %s is recursive and blocked by default; set EGO_SHADOW_ALLOW_RECURSIVE=1 to override", functionName)
+	}
+
 	if m.locator == nil {
 		return fmt.Errorf("locator required for line resolution")
 	}
-	addr, err := m.locator.GetLineAddress(functionName, line)
+	addr, err := m.resolveSafeLineAddress(fn, functionName, line)
 	if err != nil {
-		return fmt.Errorf("failed to resolve line %d in %s: %w", line, functionName, err)
+		return fmt.Errorf("failed to resolve address for line %d in %s: %w", line, functionName, err)
 	}
 
 	p := Point{
@@ -323,15 +365,33 @@ func (m *Manager) CreatePoint(fileName, functionName string, line int, types []I
 	}
 	for i := range m.points[k] {
 		if m.points[k][i].Line == line && m.points[k][i].Status == PointSoftDeleted {
-			m.points[k][i] = p
+			candidate := make([]Point, len(m.points[k]))
+			copy(candidate, m.points[k])
+			candidate[i] = p
+			if err := m.updateShadowFunction(fn, collectActivePoints(candidate)); err != nil {
+				return err
+			}
+			m.points[k] = candidate
 			setPCStatus(addr, PointActive, line)
-			return m.updateShadowFunction(fn, collectActivePoints(m.points[k]))
+			return nil
 		}
 	}
-	m.points[k] = append(m.points[k], p)
+	candidate := append([]Point(nil), m.points[k]...)
+	candidate = append(candidate, p)
+	if err := m.updateShadowFunction(fn, collectActivePoints(candidate)); err != nil {
+		return err
+	}
+	m.points[k] = candidate
 	setPCStatus(addr, PointActive, line)
+	return nil
+}
 
-	return m.updateShadowFunction(fn, collectActivePoints(m.points[k]))
+func (m *Manager) resolveSafeLineAddress(fn *function.Function, functionName string, line int) (uint64, error) {
+	if m.locator == nil {
+		return 0, fmt.Errorf("locator required for line resolution")
+	}
+
+	return m.locator.GetLineAddress(functionName, line)
 }
 
 func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, types []InstrumentType) error {
@@ -359,6 +419,10 @@ func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, types [
 		return fmt.Errorf("function %s not found (must be registered or in DWARF)", functionName)
 	}
 
+	if hasSelfRecursiveCall(fn) && !allowRecursiveInstrumentation() {
+		return fmt.Errorf("function %s is recursive and blocked by default; set EGO_SHADOW_ALLOW_RECURSIVE=1 to override", functionName)
+	}
+
 	if addr < fn.Entry || addr >= fn.End {
 		return fmt.Errorf("address 0x%x is outside function %s [0x%x, 0x%x)", addr, functionName, fn.Entry, fn.End)
 	}
@@ -379,15 +443,25 @@ func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, types [
 	}
 	for i := range m.points[k] {
 		if m.points[k][i].Address == addr && m.points[k][i].Status == PointSoftDeleted {
-			m.points[k][i] = p
+			candidate := make([]Point, len(m.points[k]))
+			copy(candidate, m.points[k])
+			candidate[i] = p
+			if err := m.updateShadowFunction(fn, collectActivePoints(candidate)); err != nil {
+				return err
+			}
+			m.points[k] = candidate
 			setPCStatus(addr, PointActive, 0)
-			return m.updateShadowFunction(fn, collectActivePoints(m.points[k]))
+			return nil
 		}
 	}
-	m.points[k] = append(m.points[k], p)
+	candidate := append([]Point(nil), m.points[k]...)
+	candidate = append(candidate, p)
+	if err := m.updateShadowFunction(fn, collectActivePoints(candidate)); err != nil {
+		return err
+	}
+	m.points[k] = candidate
 	setPCStatus(addr, PointActive, 0)
-
-	return m.updateShadowFunction(fn, collectActivePoints(m.points[k]))
+	return nil
 }
 
 func (m *Manager) updateShadowFunction(fn *function.Function, points []Point) error {

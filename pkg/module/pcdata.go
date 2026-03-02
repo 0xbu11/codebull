@@ -34,14 +34,14 @@ func decodePCDataEntries(p []byte) (pcDataEntries []PCDataEntry) {
 
 func encodePCDataEntries(pcDataEntries []PCDataEntry) (encoded []byte, err error) {
 	if len(pcDataEntries) == 0 {
-		return nil, nil
+		return []byte{0}, nil
 	}
 	encoded = make([]byte, 0, len(pcDataEntries)*4)
 	prevOffset := int32(0)
 	prevValue := int32(-1)
 
 	for i := 0; i < len(pcDataEntries); i++ {
-		if i+1 < len(pcDataEntries) && pcDataEntries[i+1].Value == pcDataEntries[i].Value {
+		if i > 0 && i < len(pcDataEntries)-1 && pcDataEntries[i].Value == prevValue {
 			continue
 		}
 
@@ -65,7 +65,12 @@ func encodePCDataEntries(pcDataEntries []PCDataEntry) (encoded []byte, err error
 }
 
 func writePCDataEntry(p []byte, value int32, offset int32) ([]byte, error) {
-	p = writeUvarint(p, uint64(encode(value)))
+	v := encode(value)
+	if v == 0 {
+		p = append(p, 0x80, 0x00)
+	} else {
+		p = writeUvarint(p, uint64(v))
+	}
 	p = writeUvarint(p, uint64(offset/pcQuantum))
 	return p, nil
 }
