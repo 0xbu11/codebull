@@ -32,6 +32,14 @@ type ReportData struct {
 	Line         int
 	Timestamp    string
 	Variables    []VariableValue
+	StackTrace   []StackFrame
+}
+
+type StackFrame struct {
+	FunctionName string `json:"function_name"`
+	File         string `json:"file,omitempty"`
+	Line         int    `json:"line,omitempty"`
+	PC           uint64 `json:"pc"`
 }
 
 type VariableValue struct {
@@ -170,6 +178,94 @@ func buildVariableFilter(variableNames []string) map[string]struct{} {
 	return filter
 }
 
+const maxStackTraceDepth = 32
+
+func computeFrameBase(pc, sp uint64, fallback int32) (uint64, int32) {
+	spDelta := fallback
+	if f := variable.FindFunc(uintptr(pc)); f.Valid() {
+		if delta, ok := variable.FuncSPDelta(f, uintptr(pc)); ok {
+			spDelta = delta
+		}
+	}
+	return sp + uint64(spDelta) + 8, spDelta
+}
+
+func buildStackFrame(pc uint64, callSite bool) StackFrame {
+	frame := StackFrame{PC: pc, FunctionName: "unknown"}
+
+	lookupPC := uintptr(pc)
+	if callSite && lookupPC > 0 {
+		lookupPC--
+	}
+
+	fnObj := runtime.FuncForPC(lookupPC)
+	if fnObj == nil {
+		return frame
+	}
+
+	frame.FunctionName = fnObj.Name()
+	file, line := fnObj.FileLine(lookupPC)
+	frame.File = file
+	frame.Line = line
+	return frame
+}
+
+func unwindCallerPC(bp, cfa uint64) uint64 {
+	if bp != 0 {
+		if pc := readMemory(uintptr(bp + 8)); pc != 0 {
+			return pc
+		}
+	}
+	if cfa < 8 {
+		return 0
+	}
+	return readMemory(uintptr(cfa - 8))
+}
+
+func collectStackTrace(regs *OnStackRegisters) []StackFrame {
+	if regs == nil || regs.PC() == 0 {
+		return nil
+	}
+
+	frameBase, _ := computeFrameBase(regs.PC(), regs.SP(), 0)
+	frames := make([]StackFrame, 0, 8)
+	frames = append(frames, buildStackFrame(regs.PC(), false))
+
+	bp := regs.BP()
+	prevBP := bp
+	callerPC := unwindCallerPC(bp, frameBase)
+	callerBP := uint64(0)
+	if bp != 0 {
+		callerBP = readMemory(uintptr(bp))
+	}
+
+	for depth := 1; depth < maxStackTraceDepth; depth++ {
+		if callerPC == 0 {
+			break
+		}
+
+		frames = append(frames, buildStackFrame(callerPC, true))
+
+		if callerBP == 0 {
+			break
+		}
+		if prevBP != 0 && callerBP <= prevBP {
+			break
+		}
+
+		nextPC := readMemory(uintptr(callerBP + 8))
+		if nextPC == 0 {
+			break
+		}
+
+		prevBP = callerBP
+		callerPC = nextPC
+		callerBP = readMemory(uintptr(callerBP))
+	}
+
+	return frames
+}
+
 func HarvestPoint(regs *OnStackRegisters) {
 	pc := regs.PC()
 	if !instrument.IsPointActiveAtPC(pc) {
@@ -214,26 +310,7 @@ func HarvestPoint(regs *OnStackRegisters) {
 
 	debugflag.Println("Variables:")
 
-	spDelta := int32(0)
-	spDeltaOK := false
-	if f := variable.FindFunc(uintptr(pc)); f.Valid() {
-		if delta, ok := variable.FuncSPDelta(f, uintptr(pc)); ok {
-			spDelta = delta
-			spDeltaOK = true
-		}
-	}
-
-	frameBase := regs.SP() + uint64(spDelta) + 8
-
-
-
-
-	if !spDeltaOK {
-		spDelta = int32(fnInfo.StackFrameSize)
-		frameBase = regs.SP() + uint64(spDelta) + 8
-	}
-
-
+	frameBase, spDelta := computeFrameBase(pc, regs.SP(), fnInfo.StackFrameSize)
 
 	debugflag.Printf("DEBUG FRAMEBASE: PC=0x%x SP=0x%x StackFrameSize=0x%x spDelta=%d frameBase=0x%x", pc, regs.SP(), fnInfo.StackFrameSize, spDelta, frameBase)
 
@@ -242,10 +319,15 @@ func HarvestPoint(regs *OnStackRegisters) {
 	var reportVars []VariableValue
 	variableNames, hasVariableFilter := instrument.GetPointVariableNamesAtPC(pc)
 	variableFilter := buildVariableFilter(variableNames)
+	collectStacktrace := instrument.GetPointCollectStacktraceAtPC(pc)
+	var stackTrace []StackFrame
 
 	line, ok := instrument.GetPointLineAtPC(pc)
 	if !ok {
 		_, line = fnObj.FileLine(uintptr(pc))
+	}
+	if collectStacktrace {
+		stackTrace = collectStackTrace(regs)
 	}
 
 	for _, v := range fnInfo.Variables {
@@ -275,6 +357,7 @@ func HarvestPoint(regs *OnStackRegisters) {
 		FunctionName: funcName,
 		Line:         line,
 		Variables:    reportVars,
+		StackTrace:   stackTrace,
 	})
 	TestLogMu.Unlock()
 
@@ -282,7 +365,8 @@ func HarvestPoint(regs *OnStackRegisters) {
 		data := ReportData{
 			FunctionName: funcName,
 			Line:         line,
-			Variables: reportVars,
+			Variables:  reportVars,
+			StackTrace: stackTrace,
 		}
 		OnReport(data)
 	}

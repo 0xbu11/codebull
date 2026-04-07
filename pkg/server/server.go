@@ -36,13 +36,14 @@ const (
 )
 
 type traceStatusResponse struct {
-	Status        string   `json:"status"`
-	Pattern       string   `json:"pattern"`
-	Line          int      `json:"line"`
-	Instrumented  bool     `json:"instrumented"`
-	Address       uint64   `json:"address,omitempty"`
-	VariableNames []string `json:"variable_names,omitempty"`
-	Types         []string `json:"types,omitempty"`
+	Status            string   `json:"status"`
+	Pattern           string   `json:"pattern"`
+	Line              int      `json:"line"`
+	Instrumented      bool     `json:"instrumented"`
+	Address           uint64   `json:"address,omitempty"`
+	VariableNames     []string `json:"variable_names,omitempty"`
+	CollectStacktrace bool     `json:"collect_stacktrace"`
+	Types             []string `json:"types,omitempty"`
 }
 
 type variableInformationResponse struct {
@@ -68,8 +69,8 @@ type Server struct {
 	clients   map[*websocket.Conn]*wsClient
 	clientsMu sync.RWMutex
 
-	createPointFn           func(fileName, functionName string, line int, variableNames []string, types []instrument.InstrumentType) error
-	createPointAtAddressFn  func(functionName string, addr uint64, variableNames []string, types []instrument.InstrumentType) error
+	createPointFn           func(fileName, functionName string, line int, variableNames []string, collectStacktrace bool, types []instrument.InstrumentType) error
+	createPointAtAddressFn  func(functionName string, addr uint64, variableNames []string, collectStacktrace bool, types []instrument.InstrumentType) error
 	removePointByFunctionFn func(functionName string, line int) error
 	removePointByAddressFn  func(functionName string, addr uint64) error
 	listVariablesFn         func(functionName string, line int) ([]variable.VariableDTO, error)
@@ -113,6 +114,13 @@ func parseVariableNames(values []string) []string {
 	}
 
 	return variableNames
+}
+
+func parseCollectStacktrace(value string) (bool, error) {
+	if value == "" {
+		return false, nil
+	}
+	return strconv.ParseBool(value)
 }
 
 func toVariableDTOs(vars []*variable.Variable) []variable.VariableDTO {
@@ -171,6 +179,11 @@ func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
 	pattern := query.Get("pattern")
 	lineStr := query.Get("line")
 	variableNames := parseVariableNames(query["variable"])
+	collectStacktrace, err := parseCollectStacktrace(query.Get("collect_stacktrace"))
+	if err != nil {
+		http.Error(w, "collect_stacktrace must be a valid boolean", http.StatusBadRequest)
+		return
+	}
 
 	if pattern == "" || lineStr == "" {
 		http.Error(w, "pattern and line are required", http.StatusBadRequest)
@@ -185,14 +198,14 @@ func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
 		if createPoint == nil {
 			createPoint = s.manager.CreatePoint
 		}
-		if err := createPoint("", pattern, line, variableNames, []instrument.InstrumentType{instrument.Logging}); err != nil {
+		if err := createPoint("", pattern, line, variableNames, collectStacktrace, []instrument.InstrumentType{instrument.Logging}); err != nil {
 			code, status := classifyError(err)
 			writeJSONError(w, status, code, fmt.Sprintf("failed to register trace: %v", err))
 			debugflag.Printf("Failed to register trace %s:%d: %v", pattern, line, err)
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-		debugflag.Printf("Registered trace: %s:%d variables=%v", pattern, line, variableNames)
+		debugflag.Printf("Registered trace: %s:%d variables=%v collect_stacktrace=%t", pattern, line, variableNames, collectStacktrace)
 
 	} else if r.Method == "DELETE" {
 		removePointByFunction := s.removePointByFunctionFn
@@ -256,6 +269,7 @@ func (s *Server) HandleTraceStatus(w http.ResponseWriter, r *http.Request) {
 		resp.Instrumented = true
 		resp.Address = point.Address
 		resp.VariableNames = append([]string(nil), point.VariableNames...)
+		resp.CollectStacktrace = point.CollectStacktrace
 		for _, t := range point.Types {
 			resp.Types = append(resp.Types, t.String())
 		}
@@ -365,13 +379,13 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 				if createPointAtAddress == nil {
 					createPointAtAddress = s.manager.CreatePointAtAddress
 				}
-				err = createPointAtAddress(fName, p.Address, p.VariableNames, p.Types)
+				err = createPointAtAddress(fName, p.Address, p.VariableNames, p.CollectStacktrace, p.Types)
 			} else {
 				createPoint := s.createPointFn
 				if createPoint == nil {
 					createPoint = s.manager.CreatePoint
 				}
-				err = createPoint(p.File, fName, p.Line, p.VariableNames, p.Types)
+				err = createPoint(p.File, fName, p.Line, p.VariableNames, p.CollectStacktrace, p.Types)
 			}
 
 			if err != nil {
@@ -442,6 +456,9 @@ func (s *Server) Broadcast(data harvest.ReportData) {
 	resp := map[string]interface{}{
 		"function_name": data.FunctionName,
 		"variables":     data.Variables,
+	}
+	if len(data.StackTrace) > 0 {
+		resp["stacktrace"] = data.StackTrace
 	}
 
 
