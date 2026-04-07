@@ -98,13 +98,14 @@ func (s PointStatus) String() string {
 }
 
 type Point struct {
-	File          string
-	Function      *function.Function
-	Line          int
-	Address       uint64
-	VariableNames []string
-	Types         []InstrumentType
-	Status        PointStatus
+	File              string
+	Function          *function.Function
+	Line              int
+	Address           uint64
+	VariableNames     []string
+	CollectStacktrace bool
+	Types             []InstrumentType
+	Status            PointStatus
 }
 
 type Manager struct {
@@ -121,6 +122,7 @@ var (
 	pointStatusBy        = make(map[uint64]PointStatus)
 	pointLineBy          = make(map[uint64]int)
 	pointVariableNamesBy = make(map[uint64][]string)
+	pointStacktraceBy    = make(map[uint64]bool)
 )
 
 func NewManager() (*Manager, error) {
@@ -229,7 +231,7 @@ func normalizeVariableNames(variableNames []string) []string {
 	return cloneVariableNames(normalized)
 }
 
-func setPCStatus(pc uint64, status PointStatus, line int, variableNames []string) {
+func setPCStatus(pc uint64, status PointStatus, line int, variableNames []string, collectStacktrace bool) {
 	pcStatusMu.Lock()
 	defer pcStatusMu.Unlock()
 	pointStatusBy[pc] = status
@@ -243,6 +245,7 @@ func setPCStatus(pc uint64, status PointStatus, line int, variableNames []string
 	} else {
 		delete(pointVariableNamesBy, pc)
 	}
+	pointStacktraceBy[pc] = collectStacktrace
 }
 
 func removePCStatus(pc uint64) {
@@ -251,6 +254,7 @@ func removePCStatus(pc uint64) {
 	delete(pointStatusBy, pc)
 	delete(pointLineBy, pc)
 	delete(pointVariableNamesBy, pc)
+	delete(pointStacktraceBy, pc)
 }
 
 func IsPointActiveAtPC(pc uint64) bool {
@@ -294,11 +298,24 @@ func GetPointVariableNamesAtPC(pc uint64) ([]string, bool) {
 	return cloneVariableNames(variableNames), true
 }
 
+func GetPointCollectStacktraceAtPC(pc uint64) bool {
+	pcStatusMu.RLock()
+	defer pcStatusMu.RUnlock()
+
+	status, ok := pointStatusBy[pc]
+	if !ok || status != PointActive {
+		return false
+	}
+
+	return pointStacktraceBy[pc]
+}
+
 func (m *Manager) refreshPCStatusByAddressLocked(addr uint64) {
 	found := false
 	best := PointHardDeleted
 	bestLine := 0
 	var bestVariableNames []string
+	bestCollectStacktrace := false
 
 	for _, points := range m.points {
 		for _, point := range points {
@@ -309,6 +326,7 @@ func (m *Manager) refreshPCStatusByAddressLocked(addr uint64) {
 				best = point.Status
 				bestLine = point.Line
 				bestVariableNames = point.VariableNames
+				bestCollectStacktrace = point.CollectStacktrace
 				found = true
 			}
 		}
@@ -319,7 +337,7 @@ func (m *Manager) refreshPCStatusByAddressLocked(addr uint64) {
 		return
 	}
 
-	setPCStatus(addr, best, bestLine, bestVariableNames)
+	setPCStatus(addr, best, bestLine, bestVariableNames, bestCollectStacktrace)
 }
 
 func (m *Manager) RegisterFunction(fn *function.Function) error {
@@ -371,7 +389,7 @@ func (m *Manager) SetCollectorAddr(addr uint64) {
 }
 
 
-func (m *Manager) CreatePoint(fileName, functionName string, line int, variableNames []string, types []InstrumentType) error {
+func (m *Manager) CreatePoint(fileName, functionName string, line int, variableNames []string, collectStacktrace bool, types []InstrumentType) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -409,21 +427,23 @@ func (m *Manager) CreatePoint(fileName, functionName string, line int, variableN
 	variableNames = normalizeVariableNames(variableNames)
 
 	p := Point{
-		File:          fileName,
-		Function:      fn,
-		Line:          line,
-		Address:       addr,
-		VariableNames: variableNames,
-		Types:         types,
-		Status:        PointActive,
+		File:              fileName,
+		Function:          fn,
+		Line:              line,
+		Address:           addr,
+		VariableNames:     variableNames,
+		CollectStacktrace: collectStacktrace,
+		Types:             types,
+		Status:            PointActive,
 	}
 
 	k := key(fn.Name)
 	for i := range m.points[k] {
 		if m.points[k][i].Line == line && m.points[k][i].Status == PointActive {
 			m.points[k][i].VariableNames = cloneVariableNames(variableNames)
+			m.points[k][i].CollectStacktrace = collectStacktrace
 			m.points[k][i].Types = types
-			setPCStatus(addr, PointActive, line, variableNames)
+			setPCStatus(addr, PointActive, line, variableNames, collectStacktrace)
 			return nil
 		}
 	}
@@ -436,7 +456,7 @@ func (m *Manager) CreatePoint(fileName, functionName string, line int, variableN
 				return err
 			}
 			m.points[k] = candidate
-			setPCStatus(addr, PointActive, line, variableNames)
+			setPCStatus(addr, PointActive, line, variableNames, collectStacktrace)
 			return nil
 		}
 	}
@@ -446,7 +466,7 @@ func (m *Manager) CreatePoint(fileName, functionName string, line int, variableN
 		return err
 	}
 	m.points[k] = candidate
-	setPCStatus(addr, PointActive, line, variableNames)
+	setPCStatus(addr, PointActive, line, variableNames, collectStacktrace)
 	return nil
 }
 
@@ -458,7 +478,7 @@ func (m *Manager) resolveSafeLineAddress(fn *function.Function, functionName str
 	return m.locator.GetLineAddress(functionName, line)
 }
 
-func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variableNames []string, types []InstrumentType) error {
+func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variableNames []string, collectStacktrace bool, types []InstrumentType) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -494,21 +514,23 @@ func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variabl
 	variableNames = normalizeVariableNames(variableNames)
 
 	p := Point{
-		File:          "unknown",
-		Function:      fn,
-		Line:          0, // Unknown
-		Address:       addr,
-		VariableNames: variableNames,
-		Types:         types,
-		Status:        PointActive,
+		File:              "unknown",
+		Function:          fn,
+		Line:              0, // Unknown
+		Address:           addr,
+		VariableNames:     variableNames,
+		CollectStacktrace: collectStacktrace,
+		Types:             types,
+		Status:            PointActive,
 	}
 
 	k := key(fn.Name)
 	for i := range m.points[k] {
 		if m.points[k][i].Address == addr && m.points[k][i].Status == PointActive {
 			m.points[k][i].VariableNames = cloneVariableNames(variableNames)
+			m.points[k][i].CollectStacktrace = collectStacktrace
 			m.points[k][i].Types = types
-			setPCStatus(addr, PointActive, 0, variableNames)
+			setPCStatus(addr, PointActive, 0, variableNames, collectStacktrace)
 			return nil
 		}
 	}
@@ -521,7 +543,7 @@ func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variabl
 				return err
 			}
 			m.points[k] = candidate
-			setPCStatus(addr, PointActive, 0, variableNames)
+			setPCStatus(addr, PointActive, 0, variableNames, collectStacktrace)
 			return nil
 		}
 	}
@@ -531,7 +553,7 @@ func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variabl
 		return err
 	}
 	m.points[k] = candidate
-	setPCStatus(addr, PointActive, 0, variableNames)
+	setPCStatus(addr, PointActive, 0, variableNames, collectStacktrace)
 	return nil
 }
 
