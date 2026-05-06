@@ -1,4 +1,4 @@
-//go:build !go1.23
+//go:build !go1.27
 
 package module
 
@@ -373,13 +373,13 @@ func createPclnTable(origFunc funcInfo, delta int64, mapping []pcMapEntry, tramp
 	newPcDataOffsets := make([]uint32, npcdata)
 	for i := uint32(0); i < npcdata; i++ {
 		offset := *(*uint32)(unsafe.Pointer(pcdataBaseOrig + uintptr(i)*4))
-		if offset == 0 || offset == 0xFFFFFFFF {
-			newPcDataOffsets[i] = 0xFFFFFFFF
-			continue
-		}
 		var strat InjectionStrategy = InjectNone
 		if i == _PCDATA_UnsafePoint {
 			strat = InjectUnsafe
+		}
+		if (offset == 0 || offset == 0xFFFFFFFF) && strat == InjectNone {
+			newPcDataOffsets[i] = 0xFFFFFFFF
+			continue
 		}
 		oldBytes := readPclnBytes(origFunc.datap, offset, mapping, trampolines, newSize, prologueShift, strat, origFunc._func.entryOff, newEntry)
 		newPcDataOffsets[i] = uint32(len(newTablesData))
@@ -426,10 +426,13 @@ func createPclnTable(origFunc funcInfo, delta int64, mapping []pcMapEntry, tramp
 }
 
 func readPclnBytes(datap *moduledata, offset uint32, mapping []pcMapEntry, trampolines []TrampolineInfo, newSize uint32, prologueShift int, strategy InjectionStrategy, funcEntryOff uint32, newEntry uintptr) []byte {
-	if offset == 0 || offset == 0xFFFFFFFF {
+	if (offset == 0 || offset == 0xFFFFFFFF) && strategy == InjectNone {
 		return nil
 	}
-	src := datap.pctab[offset:]
+	var src []byte
+	if offset != 0 && offset != 0xFFFFFFFF {
+		src = datap.pctab[offset:]
+	}
 	entries := decodePCDataEntries(src)
 	origEntries := append([]PCDataEntry(nil), entries...)
 
@@ -453,10 +456,6 @@ func readPclnBytes(datap *moduledata, offset uint32, mapping []pcMapEntry, tramp
 		for i := range entries {
 			entries[i].Offset += uintptr(prologueShift)
 		}
-	}
-
-	if len(entries) > 0 && entries[0].Offset > 0 {
-		entries = append([]PCDataEntry{{Offset: 0, Value: entries[0].Value}}, entries...)
 	}
 
 	sort.Slice(trampolines, func(i, j int) bool {
@@ -547,16 +546,15 @@ func readPclnBytes(datap *moduledata, offset uint32, mapping []pcMapEntry, tramp
 						appendStaged(e.Offset, e.Value, sourceTrampBody)
 					}
 				} else {
-					bodyVal := valStart + int32(t.StackDelta)
-					appendStaged(tStart, bodyVal, sourceTrampStart)
-					appendStaged(tEnd, valEnd, sourceTrampEnd)
+					appendStaged(tStart, valStart, sourceTrampStart)
+					appendStaged(tEnd, valStart+int32(t.StackDelta), sourceTrampEnd)
 				}
 			} else if strategy == InjectInvalid {
-				appendStaged(tStart, -1, sourceTrampStart)
-				appendStaged(tEnd, valEnd, sourceTrampEnd)
+				appendStaged(tStart, valStart, sourceTrampStart)
+				appendStaged(tEnd, -1, sourceTrampEnd)
 			} else if strategy == InjectUnsafe {
-				appendStaged(tStart, -2, sourceTrampStart)
-				appendStaged(tEnd, valEnd, sourceTrampEnd)
+				appendStaged(tStart, valStart, sourceTrampStart)
+				appendStaged(tEnd, -2, sourceTrampEnd)
 			} else {
 				appendStaged(tStart, valStart, sourceTrampStart)
 			}
@@ -917,28 +915,25 @@ func addModule(md *moduledata) {
 	patcherMutex.Lock()
 	defer patcherMutex.Unlock()
 
-	var last *moduledata
-
-	for p := &firstmoduledata; p != nil; p = p.next {
-		if p == md {
+	for _, m := range registeredModules {
+		if m == md {
 			debugflag.Printf("PATCHER: Module %s already registered at %p.", md.modulename, unsafe.Pointer(md))
 			return
 		}
-		last = p
 	}
 
-	if last != nil {
-		debugflag.Printf("PATCHER: Linking module %s (0x%x) to last module %s (0x%x)", md.modulename, md.text, last.modulename, last.text)
-		last.next = md
-		lastmoduledatap = md
-	} else {
-		debugflag.Println("PATCHER: Critical error: firstmoduledata list traversal failed, last is nil")
+	if lastmoduledatap == nil {
+		debugflag.Println("PATCHER: Critical error: lastmoduledatap is nil")
 		return
 	}
 
-	modulesinit()
+	last := lastmoduledatap
+	debugflag.Printf("PATCHER: Linking module %s (0x%x) to last module %s (0x%x)", md.modulename, md.text, last.modulename, last.text)
+	last.next = md
+	lastmoduledatap = md
+	registeredModules = append(registeredModules, md)
 
-	mods := activeModules()
+	mods := registeredModules
 	found := false
 	for _, m := range mods {
 		if m == md {
@@ -949,7 +944,7 @@ func addModule(md *moduledata) {
 	if found {
 		debugflag.Printf("PATCHER: Success! Module %s (0x%x) found in activeModules", md.modulename, md.text)
 	} else {
-		debugflag.Printf("PATCHER: ERROR! Module %s (0x%x) NOT found in activeModules", md.modulename, md.text)
+		debugflag.Printf("PATCHER: Module %s (0x%x) linked; activeModules has not refreshed yet", md.modulename, md.text)
 	}
 }
 

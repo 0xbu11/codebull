@@ -1,4 +1,4 @@
-//go:build !go1.26
+//go:build go1.26 && !go1.27
 
 package module
 
@@ -26,6 +26,7 @@ type moduledata struct {
 	types, etypes         uintptr
 	rodata                uintptr
 	gofunc                uintptr // go.func.*
+	epclntab              uintptr
 
 	textsectmap []textsect
 	typelinks   []int32          // offsets from types
@@ -41,12 +42,11 @@ type moduledata struct {
 	modulehashes []modulehash
 
 	hasmain uint8 // 1 if module contains the main function, 0 otherwise
+	bad     bool  // module failed to load and should be ignored
 
 	gcdatamask, gcbssmask bitvector
 
 	typemap map[int32]unsafe.Pointer // map[typeOff]*_type
-
-	bad bool // module failed to load and should be ignored
 
 	next *moduledata
 }
@@ -151,4 +151,3 @@ const (
 	_PCDATA_UnsafePointUnsafe = -2 // Unsafe for async preemption
 
 )
-
