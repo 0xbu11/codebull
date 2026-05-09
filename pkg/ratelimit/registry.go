@@ -18,8 +18,8 @@ var globalRegistry = &Registry{
 	configs:  make(map[uint64]Config),
 	defaultConfig: &Config{
 		Algorithm: "token_bucket",
-		Rate:      1.0,
-		Burst:     1,
+		Rate:      1000.0,
+		Burst:     1000,
 	},
 	defaultLimiter: NewTokenBucketLimiter(1.0, 1),
 }
