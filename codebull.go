@@ -82,6 +82,8 @@ func ensureManagerAndMux() (*http.ServeMux, error) {
 	mux.HandleFunc("/trace", srv.HandleTrace)
 	mux.HandleFunc("/trace/status", srv.HandleTraceStatus)
 	mux.HandleFunc("/variable/information", srv.HandleVariableInformation)
+	mux.HandleFunc("/ratelimit/status", srv.HandleRateLimitStatus)
+	mux.HandleFunc("/ratelimit/update", srv.HandleRateLimitUpdate)
 
 	return mux, nil
 }

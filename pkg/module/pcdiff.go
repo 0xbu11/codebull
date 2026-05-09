@@ -54,19 +54,19 @@ func CompareOriginalShadowPCTables(origEntry, shadowEntry uint64) (*PCTableDiffR
 		return nil, fmt.Errorf("shadow function not found at 0x%x", shadowEntry)
 	}
 
-	mapping, _ := getPCMapping(uintptr(shadowEntry))
+	mapping, _ := GetPCMapping(uintptr(shadowEntry))
 	if len(mapping) == 0 {
 		return nil, fmt.Errorf("shadow mapping metadata missing at 0x%x", shadowEntry)
 	}
 
-	origPCSP := decodePCDataEntries(origFunc.datap.pctab[origFunc.pcsp:])
-	shadowPCSP := decodePCDataEntries(shadowFunc.datap.pctab[shadowFunc.pcsp:])
-	origPCFile := decodePCDataEntries(origFunc.datap.pctab[origFunc.pcfile:])
-	shadowPCFile := decodePCDataEntries(shadowFunc.datap.pctab[shadowFunc.pcfile:])
-	origPCLN := decodePCDataEntries(origFunc.datap.pctab[origFunc.pcln:])
-	shadowPCLN := decodePCDataEntries(shadowFunc.datap.pctab[shadowFunc.pcln:])
+	origPCSP := decodePCDataEntries(-1, origFunc.datap.pctab[origFunc.pcsp:])
+	shadowPCSP := decodePCDataEntries(-1, shadowFunc.datap.pctab[shadowFunc.pcsp:])
+	origPCFile := decodePCDataEntries(-2, origFunc.datap.pctab[origFunc.pcfile:])
+	shadowPCFile := decodePCDataEntries(-2, shadowFunc.datap.pctab[shadowFunc.pcfile:])
+	origPCLN := decodePCDataEntries(-3, origFunc.datap.pctab[origFunc.pcln:])
+	shadowPCLN := decodePCDataEntries(-3, shadowFunc.datap.pctab[shadowFunc.pcln:])
 
-	sorted := append([]pcMapEntry(nil), mapping...)
+	sorted := append([]PCMapEntry(nil), mapping...)
 	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].Orig == sorted[j].Orig {
 			return sorted[i].New < sorted[j].New
@@ -107,12 +107,12 @@ func ListOriginalShadowPCValues(origEntry, shadowEntry uint64) ([]PCValueFullRow
 		return nil, fmt.Errorf("shadow function not found at 0x%x", shadowEntry)
 	}
 
-	mapping, _ := getPCMapping(uintptr(shadowEntry))
+	mapping, _ := GetPCMapping(uintptr(shadowEntry))
 	if len(mapping) == 0 {
 		return nil, fmt.Errorf("shadow mapping metadata missing at 0x%x", shadowEntry)
 	}
 
-	sorted := append([]pcMapEntry(nil), mapping...)
+	sorted := append([]PCMapEntry(nil), mapping...)
 	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].Orig == sorted[j].Orig {
 			return sorted[i].New < sorted[j].New
@@ -249,7 +249,7 @@ func FormatPCValueFullListCSV(rows []PCValueFullRow) string {
 	return builder.String()
 }
 
-func buildTableDiffRows(mapping []pcMapEntry, origEntries, shadowEntries []PCDataEntry, origEntry, shadowEntry uintptr) []PCTableDiffRow {
+func buildTableDiffRows(mapping []PCMapEntry, origEntries, shadowEntries []PCDataEntry, origEntry, shadowEntry uintptr) []PCTableDiffRow {
 	rows := make([]PCTableDiffRow, 0)
 	seen := make(map[uint64]struct{}, len(mapping))
 

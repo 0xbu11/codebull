@@ -60,6 +60,12 @@ func (v *Variable) ResetRuntimeState() {
 	}
 }
 
+func (v *Variable) Clone() *Variable {
+	newV := *v
+	newV.ResetRuntimeState()
+	return &newV
+}
+
 func resolveTypedef(t dwarf.Type) dwarf.Type {
 	for {
 		tt, ok := t.(*dwarf.TypedefType)

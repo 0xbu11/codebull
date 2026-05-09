@@ -13,6 +13,8 @@ import (
 	"github.com/0xbu11/codebull/pkg/debugflag"
 	"github.com/0xbu11/codebull/pkg/function"
 	"github.com/0xbu11/codebull/pkg/instrument"
+	"github.com/0xbu11/codebull/pkg/module"
+	"github.com/0xbu11/codebull/pkg/ratelimit"
 	"github.com/0xbu11/codebull/pkg/variable"
 )
 
@@ -273,6 +275,11 @@ func HarvestPoint(regs *OnStackRegisters) {
 		return
 	}
 
+	if !ratelimit.Global().Allow(pc) {
+		debugflag.Printf("Rate limit hit at PC=0x%x", pc)
+		return
+	}
+
 	if debugflag.Enabled() {
 		debugflag.Printf("DEBUG REGS: PC=0x%x SP=0x%x RAX=0x%x RBP=0x%x OldRBP=0x%x", pc, regs.SP(), regs.RAX, regs.BP(), regs.OldRBP)
 		debugflag.Println("STACK DUMP FROM SP:")
@@ -330,23 +337,26 @@ func HarvestPoint(regs *OnStackRegisters) {
 		stackTrace = collectStackTrace(regs)
 	}
 
-	for _, v := range fnInfo.Variables {
+	debugflag.Printf("Variables count: %d", len(fnInfo.Variables))
+	for _, vTemplate := range fnInfo.Variables {
 		if hasVariableFilter {
-			if _, ok := variableFilter[v.Name]; !ok {
+			if _, ok := variableFilter[vTemplate.Name]; !ok {
 				continue
 			}
 		}
 
-		v.ResetRuntimeState()
+		v := vTemplate.Clone()
 
-		valAddr, err := v.Evaluate(regs, frameBase, regs.PC())
+		origPC := module.GetOriginalPC(uintptr(pc))
+		valAddr, err := v.Evaluate(regs, frameBase, uint64(origPC))
 		if err != nil {
 			v.Unreadable = fmt.Errorf("unsupported: %v", err)
+			debugflag.Printf("  %s: <Error: %v>", v.Name, err)
 		} else {
 			v.Addr = valAddr
 			v.LoadValue()
+			debugflag.Printf("  %s: %v", v.Name, constantToInterface(v.Value))
 		}
-
 
 		reportVars = append(reportVars, toVariableValue(v))
 	}

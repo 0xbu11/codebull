@@ -11,7 +11,7 @@ type PCDataEntry struct {
 
 const pcQuantum = 1 // Min instruction size, usually 1 for x86/amd64
 
-func decodePCDataEntries(p []byte) (pcDataEntries []PCDataEntry) {
+func decodePCDataEntries(table int, p []byte) (pcDataEntries []PCDataEntry) {
 	if p == nil {
 		return pcDataEntries
 	}
@@ -23,7 +23,7 @@ func decodePCDataEntries(p []byte) (pcDataEntries []PCDataEntry) {
 		if !ok {
 			return pcDataEntries
 		}
-		debugflag.Printf("DECODE: PC: %d Val: %d", pc, val)
+		debugflag.Printf("DECODE: Table: %d PC: %d Val: %d", table, pc, val)
 		pcDataEntries = append(pcDataEntries, PCDataEntry{Offset: pc, Value: val})
 		if len(p) <= 0 {
 			return pcDataEntries
@@ -41,6 +41,10 @@ func encodePCDataEntries(pcDataEntries []PCDataEntry) (encoded []byte, err error
 	prevValue := int32(-1)
 
 	for i := 0; i < len(pcDataEntries); i++ {
+		for i+1 < len(pcDataEntries) && pcDataEntries[i+1].Offset == pcDataEntries[i].Offset {
+			i++
+		}
+
 		if i > 0 && i < len(pcDataEntries)-1 && pcDataEntries[i].Value == prevValue {
 			continue
 		}
