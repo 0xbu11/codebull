@@ -13,6 +13,7 @@ import (
 	"github.com/0xbu11/codebull/pkg/function"
 	"github.com/0xbu11/codebull/pkg/guard"
 	"github.com/0xbu11/codebull/pkg/module"
+	"github.com/0xbu11/codebull/pkg/ratelimit"
 	"github.com/0xbu11/codebull/pkg/codebull"
 	"github.com/0xbu11/codebull/pkg/suspension"
 	"github.com/0xbu11/codebull/pkg/variable"
@@ -106,6 +107,7 @@ type Point struct {
 	CollectStacktrace bool
 	Types             []InstrumentType
 	Status            PointStatus
+	RateLimit         *ratelimit.Config
 }
 
 type Manager struct {
@@ -123,6 +125,7 @@ var (
 	pointLineBy          = make(map[uint64]int)
 	pointVariableNamesBy = make(map[uint64][]string)
 	pointStacktraceBy    = make(map[uint64]bool)
+	pointRateLimitBy     = make(map[uint64]*ratelimit.Config)
 )
 
 func NewManager() (*Manager, error) {
@@ -142,17 +145,23 @@ func NewManager() (*Manager, error) {
 		return m, fmt.Errorf("failed to create binary reader: %w", err)
 	}
 
-	var debugLoc []byte
+	var debugLoc, debugLocLists, debugAddr []byte
 	if exePath, err := os.Executable(); err == nil {
 		if f, err := elf.Open(exePath); err == nil {
 			if sec := f.Section(".debug_loc"); sec != nil {
 				debugLoc, _ = sec.Data()
 			}
+			if sec := f.Section(".debug_loclists"); sec != nil {
+				debugLocLists, _ = sec.Data()
+			}
+			if sec := f.Section(".debug_addr"); sec != nil {
+				debugAddr, _ = sec.Data()
+			}
 			f.Close()
 		}
 	}
 
-	m.locator = function.NewLocator(dwarfData, reader, debugLoc)
+	m.locator = function.NewLocator(dwarfData, reader, debugLoc, debugLocLists, debugAddr)
 	return m, nil
 }
 
@@ -231,7 +240,7 @@ func normalizeVariableNames(variableNames []string) []string {
 	return cloneVariableNames(normalized)
 }
 
-func setPCStatus(pc uint64, status PointStatus, line int, variableNames []string, collectStacktrace bool) {
+func setPCStatus(pc uint64, status PointStatus, line int, variableNames []string, collectStacktrace bool, ratelimitCfg *ratelimit.Config) {
 	pcStatusMu.Lock()
 	defer pcStatusMu.Unlock()
 	pointStatusBy[pc] = status
@@ -246,6 +255,14 @@ func setPCStatus(pc uint64, status PointStatus, line int, variableNames []string
 		delete(pointVariableNamesBy, pc)
 	}
 	pointStacktraceBy[pc] = collectStacktrace
+	if ratelimitCfg != nil {
+		pointRateLimitBy[pc] = ratelimitCfg
+		if status == PointActive {
+			ratelimit.Global().Register(pc, *ratelimitCfg)
+		}
+	} else {
+		delete(pointRateLimitBy, pc)
+	}
 }
 
 func removePCStatus(pc uint64) {
@@ -255,6 +272,7 @@ func removePCStatus(pc uint64) {
 	delete(pointLineBy, pc)
 	delete(pointVariableNamesBy, pc)
 	delete(pointStacktraceBy, pc)
+	delete(pointRateLimitBy, pc)
 }
 
 func IsPointActiveAtPC(pc uint64) bool {
@@ -316,6 +334,7 @@ func (m *Manager) refreshPCStatusByAddressLocked(addr uint64) {
 	bestLine := 0
 	var bestVariableNames []string
 	bestCollectStacktrace := false
+	var bestRateLimit *ratelimit.Config
 
 	for _, points := range m.points {
 		for _, point := range points {
@@ -327,6 +346,7 @@ func (m *Manager) refreshPCStatusByAddressLocked(addr uint64) {
 				bestLine = point.Line
 				bestVariableNames = point.VariableNames
 				bestCollectStacktrace = point.CollectStacktrace
+				bestRateLimit = point.RateLimit
 				found = true
 			}
 		}
@@ -337,7 +357,7 @@ func (m *Manager) refreshPCStatusByAddressLocked(addr uint64) {
 		return
 	}
 
-	setPCStatus(addr, best, bestLine, bestVariableNames, bestCollectStacktrace)
+	setPCStatus(addr, best, bestLine, bestVariableNames, bestCollectStacktrace, bestRateLimit)
 }
 
 func (m *Manager) RegisterFunction(fn *function.Function) error {
@@ -389,7 +409,7 @@ func (m *Manager) SetCollectorAddr(addr uint64) {
 }
 
 
-func (m *Manager) CreatePoint(fileName, functionName string, line int, variableNames []string, collectStacktrace bool, types []InstrumentType) error {
+func (m *Manager) CreatePoint(fileName, functionName string, line int, variableNames []string, collectStacktrace bool, types []InstrumentType, ratelimitCfg *ratelimit.Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -443,7 +463,8 @@ func (m *Manager) CreatePoint(fileName, functionName string, line int, variableN
 			m.points[k][i].VariableNames = cloneVariableNames(variableNames)
 			m.points[k][i].CollectStacktrace = collectStacktrace
 			m.points[k][i].Types = types
-			setPCStatus(addr, PointActive, line, variableNames, collectStacktrace)
+			m.points[k][i].RateLimit = ratelimitCfg
+			setPCStatus(addr, PointActive, line, variableNames, collectStacktrace, ratelimitCfg)
 			return nil
 		}
 	}
@@ -456,7 +477,7 @@ func (m *Manager) CreatePoint(fileName, functionName string, line int, variableN
 				return err
 			}
 			m.points[k] = candidate
-			setPCStatus(addr, PointActive, line, variableNames, collectStacktrace)
+			setPCStatus(addr, PointActive, line, variableNames, collectStacktrace, ratelimitCfg)
 			return nil
 		}
 	}
@@ -466,7 +487,7 @@ func (m *Manager) CreatePoint(fileName, functionName string, line int, variableN
 		return err
 	}
 	m.points[k] = candidate
-	setPCStatus(addr, PointActive, line, variableNames, collectStacktrace)
+	setPCStatus(addr, PointActive, line, variableNames, collectStacktrace, ratelimitCfg)
 	return nil
 }
 
@@ -478,7 +499,7 @@ func (m *Manager) resolveSafeLineAddress(fn *function.Function, functionName str
 	return m.locator.GetLineAddress(functionName, line)
 }
 
-func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variableNames []string, collectStacktrace bool, types []InstrumentType) error {
+func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variableNames []string, collectStacktrace bool, types []InstrumentType, ratelimitCfg *ratelimit.Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -530,7 +551,8 @@ func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variabl
 			m.points[k][i].VariableNames = cloneVariableNames(variableNames)
 			m.points[k][i].CollectStacktrace = collectStacktrace
 			m.points[k][i].Types = types
-			setPCStatus(addr, PointActive, 0, variableNames, collectStacktrace)
+			m.points[k][i].RateLimit = ratelimitCfg
+			setPCStatus(addr, PointActive, 0, variableNames, collectStacktrace, ratelimitCfg)
 			return nil
 		}
 	}
@@ -543,7 +565,7 @@ func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variabl
 				return err
 			}
 			m.points[k] = candidate
-			setPCStatus(addr, PointActive, 0, variableNames, collectStacktrace)
+			setPCStatus(addr, PointActive, 0, variableNames, collectStacktrace, ratelimitCfg)
 			return nil
 		}
 	}
@@ -553,7 +575,7 @@ func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variabl
 		return err
 	}
 	m.points[k] = candidate
-	setPCStatus(addr, PointActive, 0, variableNames, collectStacktrace)
+	setPCStatus(addr, PointActive, 0, variableNames, collectStacktrace, ratelimitCfg)
 	return nil
 }
 

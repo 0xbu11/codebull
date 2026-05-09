@@ -21,7 +21,7 @@ func VerifyPatchedCallbackPCData(origEntry, shadowEntry uint64) error {
 		return fmt.Errorf("shadow function not found at 0x%x", shadowEntry)
 	}
 
-	mapping, mappingCount := getPCMapping(uintptr(shadowEntry))
+	mapping, mappingCount := GetPCMapping(uintptr(shadowEntry))
 	if len(mapping) == 0 {
 		return fmt.Errorf("shadow mapping metadata missing at 0x%x", shadowEntry)
 	}
@@ -30,7 +30,7 @@ func VerifyPatchedCallbackPCData(origEntry, shadowEntry uint64) error {
 		return fmt.Errorf("shadow trampoline metadata missing at 0x%x", shadowEntry)
 	}
 
-	sorted := append([]pcMapEntry(nil), mapping...)
+	sorted := append([]PCMapEntry(nil), mapping...)
 	sort.Slice(sorted, func(i, j int) bool {
 		if sorted[i].New == sorted[j].New {
 			return sorted[i].Orig < sorted[j].Orig
@@ -53,7 +53,7 @@ func VerifyPatchedCallbackPCData(origEntry, shadowEntry uint64) error {
 		shadowStartPC := uintptr(shadowEntry) + uintptr(tramp.StartOffset)
 		shadowEndPC := uintptr(shadowEntry) + uintptr(tramp.EndOffset)
 
-		if err := verifyTrampolinePCData(*origFunc, *shadowFunc, origPC, shadowStartPC, shadowEndPC); err != nil {
+		if err := verifyTrampolinePCData(*origFunc, *shadowFunc, uintptr(shadowEntry), origPC, shadowStartPC, shadowEndPC); err != nil {
 			return fmt.Errorf("trampoline [%#x, %#x) verification failed: %w", tramp.StartOffset, tramp.EndOffset, err)
 		}
 
@@ -65,7 +65,7 @@ func VerifyPatchedCallbackPCData(origEntry, shadowEntry uint64) error {
 	return nil
 }
 
-func originalOffsetAtShadowOffset(mapping []pcMapEntry, shadowOff uint32) (uint32, bool) {
+func originalOffsetAtShadowOffset(mapping []PCMapEntry, shadowOff uint32) (uint32, bool) {
 	idx := sort.Search(len(mapping), func(i int) bool {
 		return mapping[i].New > shadowOff
 	})
@@ -75,7 +75,7 @@ func originalOffsetAtShadowOffset(mapping []pcMapEntry, shadowOff uint32) (uint3
 	return mapping[idx-1].Orig, true
 }
 
-func verifyTrampolinePCData(origFunc, shadowFunc funcInfo, origPC, shadowStartPC, shadowEndPC uintptr) error {
+func verifyTrampolinePCData(origFunc, shadowFunc funcInfo, shadowEntry uintptr, origPC, shadowStartPC, shadowEndPC uintptr) error {
 	maxTables := int(origFunc.npcdata)
 	if int(shadowFunc.npcdata) < maxTables {
 		maxTables = int(shadowFunc.npcdata)
@@ -99,7 +99,7 @@ func verifyTrampolinePCData(origFunc, shadowFunc funcInfo, origPC, shadowStartPC
 						return fmt.Errorf("pcdata[%d] start mismatch at pc=0x%x: got %d want %d", table, pc, newValue, origValue)
 					}
 				} else if newValue != _PCDATA_UnsafePointUnsafe {
-					return fmt.Errorf("pcdata[%d] at pc=0x%x = %d, want %d", table, pc, newValue, _PCDATA_UnsafePointUnsafe)
+					return fmt.Errorf("pcdata[%d] at pc=0x%x = %d, want %d (shadowEntry=0x%x, off=0x%x)", table, pc, newValue, _PCDATA_UnsafePointUnsafe, shadowEntry, pc-shadowEntry)
 				}
 			} else if newValue != origValue {
 				return fmt.Errorf("pcdata[%d] mismatch at pc=0x%x: got %d want %d", table, pc, newValue, origValue)

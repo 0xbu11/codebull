@@ -42,29 +42,29 @@ func (v *Variable) GetRegsUsed() ([]uint64, error) {
 
 		case opcode >= DW_OP_breg0 && opcode <= DW_OP_breg31:
 			regs = append(regs, uint64(opcode-DW_OP_breg0))
-			if _, err := readSLEB128(buf); err != nil {
+			if _, err := ReadSLEB128(buf); err != nil {
 				return nil, err
 			}
 
 		case opcode == DW_OP_regx:
-			reg, err := readULEB128(buf)
+			reg, err := ReadULEB128(buf)
 			if err != nil {
 				return nil, err
 			}
 			regs = append(regs, reg)
 
 		case opcode == DW_OP_bregx:
-			reg, err := readULEB128(buf)
+			reg, err := ReadULEB128(buf)
 			if err != nil {
 				return nil, err
 			}
 			regs = append(regs, reg)
-			if _, err := readSLEB128(buf); err != nil {
+			if _, err := ReadSLEB128(buf); err != nil {
 				return nil, err
 			}
 
 		case opcode == DW_OP_fbreg:
-			if _, err := readSLEB128(buf); err != nil {
+			if _, err := ReadSLEB128(buf); err != nil {
 				return nil, err
 			}
 
@@ -83,7 +83,7 @@ func (v *Variable) GetRegsUsed() ([]uint64, error) {
 	return regs, nil
 }
 
-func readULEB128(b *bytes.Buffer) (uint64, error) {
+func ReadULEB128(b *bytes.Buffer) (uint64, error) {
 	var result uint64
 	var shift uint
 	for {
@@ -116,7 +116,7 @@ func decodeSimpleLocation(loc []byte) (string, error) {
 		}
 		return fmt.Sprintf("Addr: 0x%x", addr), nil
 	case DW_OP_fbreg:
-		offset, _ := readSLEB128(buf)
+		offset, _ := ReadSLEB128(buf)
 		return fmt.Sprintf("FBReg + %d", offset), nil
 	case DW_OP_call_frame_cfa:
 		return "CallFrameCFA", nil
@@ -125,7 +125,7 @@ func decodeSimpleLocation(loc []byte) (string, error) {
 	}
 }
 
-func readSLEB128(b *bytes.Buffer) (int64, error) {
+func ReadSLEB128(b *bytes.Buffer) (int64, error) {
 	var result int64
 	var shift uint
 	for {
@@ -193,7 +193,7 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 			stack = append(stack, addr)
 
 		case opcode == DW_OP_fbreg:
-			offset, err := readSLEB128(buf)
+			offset, err := ReadSLEB128(buf)
 			if err != nil {
 				return 0, err
 			}
@@ -216,7 +216,7 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 
 		case opcode >= DW_OP_breg0 && opcode <= DW_OP_breg31:
 			regNum := uint64(opcode - DW_OP_breg0)
-			offset, err := readSLEB128(buf)
+			offset, err := ReadSLEB128(buf)
 			if err != nil {
 				return 0, err
 			}
@@ -227,7 +227,7 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 			stack = append(stack, uint64(int64(regVal)+offset))
 
 		case opcode == DW_OP_regx:
-			regNum, err := readULEB128(buf)
+			regNum, err := ReadULEB128(buf)
 			if err != nil {
 				return 0, err
 			}
@@ -241,11 +241,11 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 			}
 
 		case opcode == DW_OP_bregx:
-			regNum, err := readULEB128(buf)
+			regNum, err := ReadULEB128(buf)
 			if err != nil {
 				return 0, err
 			}
-			offset, err := readSLEB128(buf)
+			offset, err := ReadSLEB128(buf)
 			if err != nil {
 				return 0, err
 			}

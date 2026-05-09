@@ -15,6 +15,7 @@ import (
 	"github.com/0xbu11/codebull/pkg/debugflag"
 	"github.com/0xbu11/codebull/pkg/harvest"
 	"github.com/0xbu11/codebull/pkg/instrument"
+	"github.com/0xbu11/codebull/pkg/ratelimit"
 	"github.com/0xbu11/codebull/pkg/codebull"
 	"github.com/0xbu11/codebull/pkg/variable"
 	"github.com/gorilla/websocket"
@@ -43,7 +44,8 @@ type traceStatusResponse struct {
 	Address           uint64   `json:"address,omitempty"`
 	VariableNames     []string `json:"variable_names,omitempty"`
 	CollectStacktrace bool     `json:"collect_stacktrace"`
-	Types             []string `json:"types,omitempty"`
+	Types             []string           `json:"types,omitempty"`
+	RateLimit         *ratelimit.Config  `json:"rate_limit,omitempty"`
 }
 
 type variableInformationResponse struct {
@@ -69,8 +71,8 @@ type Server struct {
 	clients   map[*websocket.Conn]*wsClient
 	clientsMu sync.RWMutex
 
-	createPointFn           func(fileName, functionName string, line int, variableNames []string, collectStacktrace bool, types []instrument.InstrumentType) error
-	createPointAtAddressFn  func(functionName string, addr uint64, variableNames []string, collectStacktrace bool, types []instrument.InstrumentType) error
+	createPointFn           func(fileName, functionName string, line int, variableNames []string, collectStacktrace bool, types []instrument.InstrumentType, ratelimitCfg *ratelimit.Config) error
+	createPointAtAddressFn  func(functionName string, addr uint64, variableNames []string, collectStacktrace bool, types []instrument.InstrumentType, ratelimitCfg *ratelimit.Config) error
 	removePointByFunctionFn func(functionName string, line int) error
 	removePointByAddressFn  func(functionName string, addr uint64) error
 	listVariablesFn         func(functionName string, line int) ([]variable.VariableDTO, error)
@@ -198,7 +200,7 @@ func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
 		if createPoint == nil {
 			createPoint = s.manager.CreatePoint
 		}
-		if err := createPoint("", pattern, line, variableNames, collectStacktrace, []instrument.InstrumentType{instrument.Logging}); err != nil {
+		if err := createPoint("", pattern, line, variableNames, collectStacktrace, []instrument.InstrumentType{instrument.Logging}, nil); err != nil {
 			code, status := classifyError(err)
 			writeJSONError(w, status, code, fmt.Sprintf("failed to register trace: %v", err))
 			debugflag.Printf("Failed to register trace %s:%d: %v", pattern, line, err)
@@ -206,6 +208,34 @@ func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 		debugflag.Printf("Registered trace: %s:%d variables=%v collect_stacktrace=%t", pattern, line, variableNames, collectStacktrace)
+
+	} else if r.Method == "POST" {
+		var req struct {
+			Point struct {
+				Pattern           string            `json:"pattern"`
+				Line              int               `json:"line"`
+				VariableNames     []string          `json:"variable_names"`
+				CollectStacktrace bool              `json:"collect_stacktrace"`
+				RateLimit         *ratelimit.Config `json:"rate_limit"`
+			} `json:"point"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		p := req.Point
+		createPoint := s.createPointFn
+		if createPoint == nil {
+			createPoint = s.manager.CreatePoint
+		}
+		if err := createPoint("", p.Pattern, p.Line, p.VariableNames, p.CollectStacktrace, []instrument.InstrumentType{instrument.Logging}, p.RateLimit); err != nil {
+			code, status := classifyError(err)
+			writeJSONError(w, status, code, fmt.Sprintf("failed to register trace: %v", err))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		debugflag.Printf("Registered trace (via POST): %s:%d variables=%v ratelimit=%v", p.Pattern, p.Line, p.VariableNames, p.RateLimit)
 
 	} else if r.Method == "DELETE" {
 		removePointByFunction := s.removePointByFunctionFn
@@ -273,6 +303,7 @@ func (s *Server) HandleTraceStatus(w http.ResponseWriter, r *http.Request) {
 		for _, t := range point.Types {
 			resp.Types = append(resp.Types, t.String())
 		}
+		resp.RateLimit = point.RateLimit
 		break
 	}
 
@@ -379,13 +410,13 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 				if createPointAtAddress == nil {
 					createPointAtAddress = s.manager.CreatePointAtAddress
 				}
-				err = createPointAtAddress(fName, p.Address, p.VariableNames, p.CollectStacktrace, p.Types)
+				err = createPointAtAddress(fName, p.Address, p.VariableNames, p.CollectStacktrace, p.Types, p.RateLimit)
 			} else {
 				createPoint := s.createPointFn
 				if createPoint == nil {
 					createPoint = s.manager.CreatePoint
 				}
-				err = createPoint(p.File, fName, p.Line, p.VariableNames, p.CollectStacktrace, p.Types)
+				err = createPoint(p.File, fName, p.Line, p.VariableNames, p.CollectStacktrace, p.Types, p.RateLimit)
 			}
 
 			if err != nil {
@@ -481,4 +512,55 @@ func (s *Server) Broadcast(data harvest.ReportData) {
 			conn.Close()
 		}
 	}
+}
+
+func (s *Server) HandleRateLimitStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	reg := ratelimit.Global()
+	resp := map[string]interface{}{
+		"status": "ok",
+		"global": reg.GetDefaultConfig(),
+		"points": reg.GetAllConfigs(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) HandleRateLimitUpdate(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var cfg ratelimit.Config
+	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	ratelimit.Global().SetDefaultLimiter(&cfg)
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
