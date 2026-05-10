@@ -2,7 +2,13 @@
 
 package module
 
-import "unsafe"
+import (
+	"fmt"
+	"runtime"
+	"unsafe"
+
+	"golang.org/x/arch/x86/x86asm"
+)
 
 //go:linkname lastmoduledatap runtime.lastmoduledatap
 var lastmoduledatap *moduledata
@@ -185,4 +191,20 @@ func (f funcInfo) valid() bool {
 
 func (f *funcInfo) Entry() uint64 {
 	return uint64(f.entryOff) + uint64(f.datap.text) // entryOff is relative to text? Wait, let's verify symtab.go
+}
+func instructionSizeAtPC(pc uintptr) (uintptr, error) {
+	if runtime.GOARCH != "amd64" {
+		return 1, nil
+	}
+
+	const window = 15
+	bytes := unsafe.Slice((*byte)(unsafe.Pointer(pc)), window)
+	inst, err := x86asm.Decode(bytes, 64)
+	if err != nil {
+		return 0, err
+	}
+	if inst.Len <= 0 {
+		return 0, fmt.Errorf("decode returned non-positive length")
+	}
+	return uintptr(inst.Len), nil
 }

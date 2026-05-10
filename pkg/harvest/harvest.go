@@ -339,6 +339,7 @@ func HarvestPoint(regs *OnStackRegisters) {
 
 	debugflag.Printf("Variables count: %d", len(fnInfo.Variables))
 	for _, vTemplate := range fnInfo.Variables {
+		debugflag.Printf("  Found DWARF variable: %s", vTemplate.Name)
 		if hasVariableFilter {
 			if _, ok := variableFilter[vTemplate.Name]; !ok {
 				continue

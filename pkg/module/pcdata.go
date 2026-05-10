@@ -45,9 +45,6 @@ func encodePCDataEntries(pcDataEntries []PCDataEntry) (encoded []byte, err error
 			i++
 		}
 
-		if i > 0 && i < len(pcDataEntries)-1 && pcDataEntries[i].Value == prevValue {
-			continue
-		}
 
 		newPair := pcDataEntries[i]
 

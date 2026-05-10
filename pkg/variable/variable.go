@@ -21,7 +21,7 @@ const (
 	sliceCapFieldName   = "cap"
 )
 
-var MaxDepth = 10
+var MaxDepth = 5
 
 type Variable struct {
 	Name       string
@@ -217,10 +217,10 @@ func (v *Variable) isInterfaceType(t *dwarf.StructType) bool {
 }
 
 func (v *Variable) LoadValue() {
-	v.LoadValueInternal(0)
+	v.LoadValueInternal(0, make(map[uint64]struct{}))
 }
 
-func (v *Variable) LoadValueInternal(depth int) {
+func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			v.Unreadable = fmt.Errorf("unsupported: panic while loading %q (%v)", v.Name, r)
@@ -237,6 +237,15 @@ func (v *Variable) LoadValueInternal(depth int) {
 
 	if depth > MaxDepth {
 		return
+	}
+
+	if v.Addr != 0 {
+		if _, ok := visited[v.Addr]; ok {
+			v.Unreadable = fmt.Errorf("circular dependency detected at 0x%x", v.Addr)
+			return
+		}
+		visited[v.Addr] = struct{}{}
+		defer delete(visited, v.Addr)
 	}
 
 	if v.IsRegister {
@@ -277,14 +286,14 @@ func (v *Variable) LoadValueInternal(depth int) {
 		v.Children = []*Variable{child}
 
 		if ptrVal != 0 {
-			child.LoadValueInternal(depth + 1)
+			child.LoadValueInternal(depth+1, visited)
 		}
 
 	case reflect.Slice:
 		if st, ok := resolveTypedef(v.Type).(*dwarf.StructType); ok {
 			v.loadSliceInfo(st)
 			if v.Unreadable == nil {
-				v.loadArrayValues(depth)
+				v.loadArrayValues(depth, visited)
 			}
 		} else {
 			v.Unreadable = fmt.Errorf("unsupported: expected slice DWARF struct type, got %T", v.Type)
@@ -292,7 +301,7 @@ func (v *Variable) LoadValueInternal(depth int) {
 
 	case reflect.Array:
 		v.Base = v.Addr
-		v.loadArrayValues(depth)
+		v.loadArrayValues(depth, visited)
 
 	case reflect.Struct:
 		if st, ok := resolveTypedef(v.Type).(*dwarf.StructType); ok {
@@ -303,7 +312,7 @@ func (v *Variable) LoadValueInternal(depth int) {
 				}
 				child.Name = f.Name
 				v.Children = append(v.Children, child)
-				child.LoadValueInternal(depth + 1) // Struct fields are same depth logically vs nesting? Let's inc depth.
+				child.LoadValueInternal(depth+1, visited) // Struct fields are same depth logically vs nesting? Let's inc depth.
 			}
 		} else {
 			v.Unreadable = fmt.Errorf("unsupported: expected struct DWARF type, got %T", v.Type)
@@ -403,7 +412,7 @@ func (v *Variable) LoadValueInternal(depth int) {
 			for _, f := range st.Field {
 				if f.Name == "len" {
 					lenVar, _ := v.toField(f)
-					lenVar.LoadValueInternal(depth + 1)
+					lenVar.LoadValueInternal(depth+1, visited)
 					lenVal, _ = constant.Int64Val(lenVar.Value)
 				}
 			}
@@ -412,7 +421,7 @@ func (v *Variable) LoadValueInternal(depth int) {
 			for _, f := range st.Field {
 				if f.Name == "str" {
 					strPtrVar, _ := v.toField(f)
-					strPtrVar.LoadValueInternal(depth + 1)
+					strPtrVar.LoadValueInternal(depth+1, visited)
 					ptrVal, _ := constant.Uint64Val(strPtrVar.Value)
 
 					if ptrVal != 0 && lenVal > 0 {
@@ -461,7 +470,7 @@ func (v *Variable) loadSliceInfo(t *dwarf.StructType) {
 	}
 }
 
-func (v *Variable) loadArrayValues(depth int) {
+func (v *Variable) loadArrayValues(depth int, visited map[uint64]struct{}) {
 	if v.Unreadable != nil || v.Len == 0 || v.Base == 0 {
 		return
 	}
@@ -476,7 +485,7 @@ func (v *Variable) loadArrayValues(depth int) {
 		elemAddr := v.Base + offset
 		child := NewVariable(fmt.Sprintf("[%d]", i), elemAddr, v.fieldType, "", nil)
 		v.Children = append(v.Children, child)
-		child.LoadValueInternal(depth + 1)
+		child.LoadValueInternal(depth+1, visited)
 	}
 }
 
@@ -489,6 +498,14 @@ func readMemory(addr uintptr, size int) (buf []byte, err error) {
 	if size <= 0 {
 		return nil, fmt.Errorf("readMemory invalid size %d", size)
 	}
+	if addr == 0 {
+		return nil, fmt.Errorf("readMemory invalid address 0x0")
+	}
+
+	if (int64(addr) << 16 >> 16) != int64(addr) {
+		return nil, fmt.Errorf("readMemory invalid non-canonical address 0x%x", addr)
+	}
+
 
 
 	buf = make([]byte, size)
