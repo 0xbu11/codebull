@@ -502,12 +502,12 @@ func readPclnBytes(datap *moduledata, offset uint32, table int, mapping []PCMapE
 
 		sourcePriority := func(s entrySource) int {
 			switch s {
-			case sourceTrampStart:
-				return 40
 			case sourceTrampBody:
-				return 38
+				return 50
+			case sourceTrampStart:
+				return 45
 			case sourceTrampEnd:
-				return 35
+				return 40
 			default:
 				return 10
 			}
@@ -533,46 +533,51 @@ func readPclnBytes(datap *moduledata, offset uint32, table int, mapping []PCMapE
 				appendStaged(e.Offset, e.Value, sourceOriginal)
 				entIdx++
 			}
-			var valStart int32 = -1
+			for entIdx < len(entries) && entries[entIdx].Offset <= tEnd {
+				entIdx++
+			}
+			var valBefore int32 = -1
 			for j := 0; j < len(entries); j++ {
-				if entries[j].Offset > tStart {
+				if entries[j].Offset >= tStart {
+					valBefore = entries[j].Value
 					break
 				}
-				valStart = entries[j].Value
 			}
 
-			var valEnd int32 = valStart
+			var valAfter int32 = valBefore
 			for j := 0; j < len(entries); j++ {
 				if entries[j].Offset > tEnd {
+					valAfter = entries[j].Value
 					break
 				}
-				valEnd = entries[j].Value
 			}
+
 			if strategy == InjectStackDelta {
-				if rebuilt, ok := rebuildPCSPForTrampoline(newEntry, t, valStart, valEnd); ok && len(rebuilt) > 0 {
+				if rebuilt, ok := rebuildPCSPForTrampoline(newEntry, t, valBefore, valAfter); ok && len(rebuilt) > 0 {
 					for _, e := range rebuilt {
 						appendStaged(e.Offset, e.Value, sourceTrampBody)
 					}
 				} else {
-					appendStaged(tStart, valStart, sourceTrampStart)
-					appendStaged(tEnd, valStart+int32(t.StackDelta), sourceTrampEnd)
+					appendStaged(tStart, valBefore, sourceTrampStart)
+					appendStaged(tEnd, valBefore+int32(t.StackDelta), sourceTrampBody)
 				}
 			} else {
-				if table == int(_PCDATA_StackMapIndex) {
-					appendStaged(tStart, -1, sourceTrampStart)
-					appendStaged(tEnd, valEnd, sourceTrampEnd)
-				} else if table == int(_PCDATA_UnsafePoint) {
-					appendStaged(tStart, -2, sourceTrampStart)
-					appendStaged(tEnd, valEnd, sourceTrampEnd)
-				} else {
-					appendStaged(tStart, valStart, sourceTrampStart)
-					if valEnd != valStart {
-						appendStaged(tEnd, valEnd, sourceTrampEnd)
+				appendStaged(tStart, valBefore, sourceTrampStart)
+				if table == int(_PCDATA_UnsafePoint) {
+					if tEnd > tStart+1 {
+						appendStaged(tStart+1, valBefore, sourceTrampStart)
+						appendStaged(tEnd, -2, sourceTrampBody)
+					} else {
+						appendStaged(tEnd, valBefore, sourceTrampBody)
 					}
+				} else if table == int(_PCDATA_StackMapIndex) {
+					appendStaged(tEnd, valBefore, sourceTrampBody)
+				} else {
+					appendStaged(tEnd, valBefore, sourceTrampBody)
 				}
-			}
-			for entIdx < len(entries) && entries[entIdx].Offset < tEnd {
-				entIdx++
+				if valAfter != valBefore {
+					appendStaged(tEnd+1, valAfter, sourceTrampEnd)
+				}
 			}
 		}
 		for entIdx < len(entries) {

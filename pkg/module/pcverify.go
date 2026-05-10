@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"runtime"
 	"sort"
-	"unsafe"
-
-	"golang.org/x/arch/x86/x86asm"
 )
 
 func VerifyPatchedCallbackPCData(origEntry, shadowEntry uint64) error {
@@ -160,19 +157,3 @@ func verifyTrampolinePCSP(shadowFunc funcInfo, shadowEntry uintptr, tramp Trampo
 	return nil
 }
 
-func instructionSizeAtPC(pc uintptr) (uintptr, error) {
-	if runtime.GOARCH != "amd64" {
-		return 1, nil
-	}
-
-	const window = 15
-	bytes := unsafe.Slice((*byte)(unsafe.Pointer(pc)), window)
-	inst, err := x86asm.Decode(bytes, 64)
-	if err != nil {
-		return 0, err
-	}
-	if inst.Len <= 0 {
-		return 0, fmt.Errorf("decode returned non-positive length")
-	}
-	return uintptr(inst.Len), nil
-}
