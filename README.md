@@ -4,15 +4,15 @@ CodeBull is a dynamic instrumentation library for Go applications.
 
 ## Requirements
 
-**Important:** This project only supports Go version **1.22.x**. Compilation with Go 1.23 or later is explicitly disabled via build constraints.
+**Important:** This project only supports Go versions **1.22.x** and **1.26.x**. Other Go versions are not supported.
 
-Ensure you have Go 1.22.0-1.22.x installed.
+Ensure you have Go 1.22.x or Go 1.26.x installed.
 
 ## Quick Start
 
 ### 1. Installation
 
-Ensure you have Go 1.22.x installed.
+Ensure you have Go 1.22.x or Go 1.26.x installed.
 
 ```bash
 # Clone the repository (if not already done)
@@ -65,7 +65,17 @@ You can verify it's running:
 curl http://localhost:9000/health
 ```
 
-### 5. Running the Demo
+### 5. Use with the VS Code Extension
+
+For the best workflow, use this project together with the VS Code extension:
+
+- [CodeBull on VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=0xbu11.codebull)
+
+Install the extension, open your Go project in VS Code, and start your instrumented application first. The extension can then connect to the running Shadow server and let you add log, metric, and flamegraph tracepoints directly from the editor.
+
+If you are using the default server settings, connect the extension to `127.0.0.1:8888`. If you changed the server address with `EGO_SHADOW_PORT` or `EGO_SHADOW_ADDR`, use the same address in the extension.
+
+### 6. Running the Demo
 
 A demo application is included to showcase the functionality.
 
@@ -80,7 +90,7 @@ go build \
 ```
 ## Requirements
 
-- Go 1.22+
+- Go 1.22.x or 1.26.x
 - Linux (for current build scripts and Ptrace usage)
 
 ## Donate
