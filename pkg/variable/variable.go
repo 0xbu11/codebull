@@ -9,6 +9,7 @@ import (
 	"go/constant"
 	"go/token"
 	"math"
+	"os"
 	"reflect"
 	"unsafe"
 
@@ -239,14 +240,6 @@ func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 		return
 	}
 
-	if v.Addr != 0 {
-		if _, ok := visited[v.Addr]; ok {
-			v.Unreadable = fmt.Errorf("circular dependency detected at 0x%x", v.Addr)
-			return
-		}
-		visited[v.Addr] = struct{}{}
-		defer delete(visited, v.Addr)
-	}
 
 	if v.IsRegister {
 		v.Value = constant.MakeUint64(v.Addr)
@@ -413,7 +406,13 @@ func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 				if f.Name == "len" {
 					lenVar, _ := v.toField(f)
 					lenVar.LoadValueInternal(depth+1, visited)
-					lenVal, _ = constant.Int64Val(lenVar.Value)
+					if lenVar.Unreadable != nil {
+						v.Unreadable = fmt.Errorf("failed to load string len: %v", lenVar.Unreadable)
+						return
+					}
+					if lenVar.Value != nil {
+						lenVal, _ = constant.Int64Val(lenVar.Value)
+					}
 				}
 			}
 			v.Len = lenVal
@@ -422,15 +421,20 @@ func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 				if f.Name == "str" {
 					strPtrVar, _ := v.toField(f)
 					strPtrVar.LoadValueInternal(depth+1, visited)
-					ptrVal, _ := constant.Uint64Val(strPtrVar.Value)
-
-					if ptrVal != 0 && lenVal > 0 {
-						if lenVal > 1024 {
-							lenVal = 1024
-						} // Cap string read
-						b, err := readMemory(uintptr(ptrVal), int(lenVal))
-						if err == nil {
-							v.Value = constant.MakeString(string(b))
+					if strPtrVar.Unreadable != nil {
+						v.Unreadable = fmt.Errorf("failed to load string ptr: %v", strPtrVar.Unreadable)
+						return
+					}
+					if strPtrVar.Value != nil {
+						ptrVal, _ := constant.Uint64Val(strPtrVar.Value)
+						if ptrVal != 0 && lenVal > 0 {
+							if lenVal > 1024 {
+								lenVal = 1024
+							} // Cap string read
+							b, err := readMemory(uintptr(ptrVal), int(lenVal))
+							if err == nil {
+								v.Value = constant.MakeString(string(b))
+							}
 						}
 					}
 				}
@@ -494,6 +498,7 @@ func (v *Variable) toField(field *dwarf.StructField) (*Variable, error) {
 }
 
 
+//go:nocheckptr
 func readMemory(addr uintptr, size int) (buf []byte, err error) {
 	if size <= 0 {
 		return nil, fmt.Errorf("readMemory invalid size %d", size)
@@ -502,14 +507,25 @@ func readMemory(addr uintptr, size int) (buf []byte, err error) {
 		return nil, fmt.Errorf("readMemory invalid address 0x0")
 	}
 
-	if (int64(addr) << 16 >> 16) != int64(addr) {
-		return nil, fmt.Errorf("readMemory invalid non-canonical address 0x%x", addr)
+	f, err := os.Open("/proc/self/mem")
+	if err != nil {
+		return readMemoryUnsafe(addr, size)
 	}
-
-
+	defer f.Close()
 
 	buf = make([]byte, size)
+	n, err := f.ReadAt(buf, int64(addr))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read memory at 0x%x: %w", addr, err)
+	}
+	if n != size {
+		return nil, fmt.Errorf("short read at 0x%x: expected %d, got %d", addr, size, n)
+	}
+	return buf, nil
+}
 
+//go:nocheckptr
+func readMemoryUnsafe(addr uintptr, size int) (buf []byte, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic reading memory at 0x%x: %v", addr, r)
@@ -517,6 +533,7 @@ func readMemory(addr uintptr, size int) (buf []byte, err error) {
 		}
 	}()
 
+	buf = make([]byte, size)
 	for i := 0; i < size; i++ {
 		ptr := unsafe.Pointer(addr + uintptr(i))
 		buf[i] = *(*byte)(ptr)

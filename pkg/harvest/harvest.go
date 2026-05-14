@@ -5,6 +5,7 @@ package harvest
 import (
 	"fmt"
 	"go/constant"
+	"reflect"
 	"runtime"
 	"strconv"
 	"sync"
@@ -150,6 +151,7 @@ func (r *OnStackRegisters) BP() uint64 {
 	return val
 }
 
+//go:nocheckptr
 func readMemory(addr uintptr) uint64 {
 	defer func() {
 		if r := recover(); r != nil {
@@ -166,12 +168,13 @@ func buildVariableFilter(variableNames []string) map[string]struct{} {
 		return nil
 	}
 
-	filter := make(map[string]struct{}, len(variableNames))
+	filter := make(map[string]struct{}, len(variableNames)*2)
 	for _, name := range variableNames {
 		if name == "" {
 			continue
 		}
 		filter[name] = struct{}{}
+		filter["&"+name] = struct{}{}
 	}
 	if len(filter) == 0 {
 		return nil
@@ -394,11 +397,17 @@ func toVariableValue(v *variable.Variable) VariableValue {
 		for i, child := range v.Children {
 			childrenVals[i] = toVariableValue(child)
 		}
-		return VariableValue{
+		res := VariableValue{
 			Name:     v.Name,
 			Children: childrenVals,
 			Type:     typeStr,
 		}
+		if v.Kind == reflect.Struct {
+			res.Value = "{...}"
+		} else if v.Kind == reflect.Slice || v.Kind == reflect.Array {
+			res.Value = fmt.Sprintf("len=%d", v.Len)
+		}
+		return res
 	}
 
 	if v.Unreadable != nil {

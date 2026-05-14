@@ -92,6 +92,7 @@ func Handler(regs *harvest.OnStackRegisters) {
 	if regs == nil {
 		return
 	}
+	print("[SHADOW] Trap hit\n")
 	blockGC()
 	snapshot := *regs
 	snapshot.RSP_Dummy = uint64(uintptr(unsafe.Pointer(&regs.OldRBP))) + 8

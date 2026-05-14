@@ -125,11 +125,13 @@ func TestE2E(t *testing.T) {
 			t.Fatalf("ReadJSON error: %v", err)
 		}
 
-
-		if funcName, ok := msg["function_name"].(string); ok && funcName == "main.target" {
-			t.Logf("Received trace for main.target: %+v", msg)
-			found = true
-			break
+		if msg["type"] == "report" {
+			data := msg["data"].(map[string]interface{})
+			if funcName, ok := data["function_name"].(string); ok && funcName == "main.target" {
+				t.Logf("Received trace for main.target: %+v", data)
+				found = true
+				break
+			}
 		}
 	}
 

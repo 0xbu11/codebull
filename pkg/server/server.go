@@ -482,23 +482,27 @@ func writeJSONError(w http.ResponseWriter, statusCode int, code, message string)
 
 func (s *Server) Broadcast(data harvest.ReportData) {
 
-
-
-	resp := map[string]interface{}{
+	reportData := map[string]interface{}{
 		"function_name": data.FunctionName,
+		"line":          data.Line,
+		"timestamp":     time.Now().Format(time.RFC3339),
 		"variables":     data.Variables,
 	}
 	if len(data.StackTrace) > 0 {
-		resp["stacktrace"] = data.StackTrace
+		reportData["stacktrace"] = data.StackTrace
 	}
 
+	resp := map[string]interface{}{
+		"type":          "report",
+		"data":          reportData,
+		"function_name": data.FunctionName,
+		"line":          data.Line,
+		"variables":     data.Variables,
+	}
 
-	vars := make([]harvest.VariableValue, 0, len(data.Variables)+2)
-	vars = append(vars, harvest.VariableValue{Name: "line", Value: fmt.Sprintf("%d", data.Line)})
-	vars = append(vars, harvest.VariableValue{Name: "timestamp", Value: time.Now().Format(time.RFC3339)})
-	vars = append(vars, data.Variables...)
-
-	resp["variables"] = vars
+	if len(data.StackTrace) > 0 {
+		resp["stacktrace"] = data.StackTrace
+	}
 
 	s.clientsMu.RLock()
 	defer s.clientsMu.RUnlock()

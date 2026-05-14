@@ -55,7 +55,7 @@ func TestDemo2_RecursiveForceMorestackPoint(t *testing.T) {
 
 	listenAddr := freeLocalAddr(t)
 	demoCmd := exec.Command(demo2Bin)
-	demoCmd.Env = append(os.Environ(), "EGO_SHADOW_ADDR="+listenAddr)
+	demoCmd.Env = append(os.Environ(), "EGO_SHADOW_ADDR="+listenAddr, "EGO_SHADOW_ALLOW_RECURSIVE=1")
 	var demoOut bytes.Buffer
 	demoCmd.Stdout = &demoOut
 	demoCmd.Stderr = &demoOut
