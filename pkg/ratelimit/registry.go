@@ -21,7 +21,7 @@ var globalRegistry = &Registry{
 		Rate:      1000.0,
 		Burst:     1000,
 	},
-	defaultLimiter: NewTokenBucketLimiter(1.0, 1),
+	defaultLimiter: NewTokenBucketLimiter(1000.0, 1000),
 }
 
 func Global() *Registry {
