@@ -67,7 +67,7 @@ func TestVariableCoverage(t *testing.T) {
 		{"Entry", "b := (x > 0)"},
 		{"AfterBasic", "arr := [2]int"},
 		{"AfterComposite", "ptr := &st"},
-		{"AfterComplex", "cp := complexStruct"},
+		{"AfterComplex", "fmt.Println(\"AfterComplex\")"},
 		{"InsideIf", "inner :="},
 		{"InsideLoop", "loopVar :="},
 		{"BeforeReturn", "return res"},
@@ -141,10 +141,10 @@ func TestVariableCoverage(t *testing.T) {
 				}
 
 				if m["type"] == "report" {
-					data, ok := m["data"].(map[string]any)
-					if !ok {
-						continue
-					}
+					data := m["data"].(map[string]any)
+					vars := data["variables"].([]any)
+					t.Logf("Subtest %s received %d variables", tcase.Label, len(vars))
+
 					lineVal := fmt.Sprintf("%v", data["line"])
 					var lineNum int
 					fmt.Sscanf(lineVal, "%d", &lineNum)
@@ -210,7 +210,7 @@ func TestVariableCoverage(t *testing.T) {
 	fmt.Fprintln(f, "|------|--------|--------------|")
 	
 	typeStats := checkTypeEffectiveness(results)
-	for _, tname := range []string{"int", "int8", "float32", "complex64", "bool", "string", "[]int", "[2]int", "main.smallStruct", "main.complexStruct", "*main.smallStruct", "map[string]int", "interface {}"} {
+	for _, tname := range []string{"int", "int8", "float32", "complex64", "bool", "struct string", "struct []int", "[2]int", "main.smallStruct", "main.complexStruct", "*main.smallStruct", "map[string]int", "interface {}"} {
 		stat := typeStats[tname]
 		fmt.Fprintf(f, "| %s | %s | %s |\n", tname, stat.Status, stat.Note)
 	}
@@ -220,7 +220,7 @@ func TestVariableCoverage(t *testing.T) {
 
 func checkTypeEffectiveness(results map[int][]any) map[string]typeStat {
 	stats := make(map[string]typeStat)
-	targetTypes := []string{"int", "int8", "float32", "complex64", "bool", "string", "[]int", "[2]int", "main.smallStruct", "main.complexStruct", "*main.smallStruct", "map[string]int", "interface {}"}
+	targetTypes := []string{"int", "int8", "float32", "complex64", "bool", "struct string", "struct []int", "[2]int", "main.smallStruct", "main.complexStruct", "*main.smallStruct", "map[string]int", "interface {}"}
 	
 	for _, tname := range targetTypes {
 		stats[tname] = typeStat{Status: "Not found", Note: "No trace data"}
@@ -237,7 +237,24 @@ func checkTypeEffectiveness(results map[int][]any) map[string]typeStat {
 						stats[vt] = typeStat{Status: "Partial/Fail", Note: fmt.Sprintf("Failed: %v", m["unreadable"])}
 					}
 				} else {
-					stats[vt] = typeStat{Status: "Success", Note: "Correctly extracted"}
+					note := "Correctly extracted"
+					if strings.Contains(vt, "[]int") || strings.Contains(vt, "[2]int") {
+						children, _ := m["children"].([]any)
+						if len(children) > 0 {
+							var vals []string
+							for i := 0; i < len(children) && i < 2; i++ {
+								child := children[i].(map[string]any)
+								vals = append(vals, fmt.Sprintf("%v", child["value"]))
+							}
+							note = fmt.Sprintf("Extracted values: [%s]", strings.Join(vals, ", "))
+							if len(children) > 2 {
+								note += "..."
+							}
+						} else {
+							note = "Success (Empty or children not loaded)"
+						}
+					}
+					stats[vt] = typeStat{Status: "Success", Note: note}
 				}
 			}
 		}

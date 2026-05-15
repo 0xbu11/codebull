@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"unsafe"
 
@@ -175,6 +176,9 @@ func buildVariableFilter(variableNames []string) map[string]struct{} {
 		}
 		filter[name] = struct{}{}
 		filter["&"+name] = struct{}{}
+		if strings.HasPrefix(name, "&") {
+			filter[name[1:]] = struct{}{}
+		}
 	}
 	if len(filter) == 0 {
 		return nil
@@ -406,6 +410,10 @@ func toVariableValue(v *variable.Variable) VariableValue {
 			res.Value = "{...}"
 		} else if v.Kind == reflect.Slice || v.Kind == reflect.Array {
 			res.Value = fmt.Sprintf("len=%d", v.Len)
+		} else if v.Kind == reflect.Ptr || v.Kind == reflect.UnsafePointer {
+			if addr, ok := constant.Uint64Val(v.Value); ok {
+				res.Value = fmt.Sprintf("0x%x", addr)
+			}
 		}
 		return res
 	}

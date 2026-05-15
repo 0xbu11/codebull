@@ -243,7 +243,9 @@ func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 
 	if v.IsRegister {
 		v.Value = constant.MakeUint64(v.Addr)
-		return
+		if v.Kind != reflect.Ptr && v.Kind != reflect.UnsafePointer {
+			return
+		}
 	}
 
 	if v.Type == nil {
@@ -261,11 +263,17 @@ func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 	debugflag.Printf("DEBUG EVAL: LoadValueInternal %s Kind: %v Addr: 0x%x Loc: %s", v.Name, v.Kind, v.Addr, locStr)
 
 	switch v.Kind {
-	case reflect.Ptr:
-		ptrVal, err := readUintRaw(v.Addr, 8)
-		if err != nil {
-			v.Unreadable = err
-			return
+	case reflect.Ptr, reflect.UnsafePointer:
+		var ptrVal uint64
+		if v.IsRegister {
+			ptrVal = v.Addr
+		} else {
+			var err error
+			ptrVal, err = readUintRaw(v.Addr, 8)
+			if err != nil {
+				v.Unreadable = err
+				return
+			}
 		}
 		v.Value = constant.MakeUint64(ptrVal)
 

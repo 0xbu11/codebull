@@ -43,6 +43,7 @@ func CoverageTarget(x int, s string) int {
 		L: []string{s},
 		M: mp,
 	}
+	fmt.Println("AfterComplex")
 
 	if b {
 		inner := x * 10
