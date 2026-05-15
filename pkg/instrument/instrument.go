@@ -30,6 +30,8 @@ var blacklist = map[string]struct{}{
 	"runtime.schedule":    {},
 	"runtime.morestack":   {},
 	"runtime.systemstack": {},
+	"runtime.newproc1":    {},
+	"runtime.ready":       {},
 }
 
 func isBlacklisted(name string) bool {

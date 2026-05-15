@@ -25,6 +25,7 @@ type Locator struct {
 	DebugAddr      []byte
 	mu             sync.RWMutex
 	funcCache      map[string]*Function
+	globalVarCache map[string]*variable.Variable
 }
 
 func NewLocator(data *dwarf.Data, reader *variable.BinaryReader, debugLoc, debugLocLists, debugAddr []byte) *Locator {
@@ -34,7 +35,8 @@ func NewLocator(data *dwarf.Data, reader *variable.BinaryReader, debugLoc, debug
 		DebugLoc:      debugLoc,
 		DebugLocLists: debugLocLists,
 		DebugAddr:     debugAddr,
-		funcCache:     make(map[string]*Function),
+		funcCache:      make(map[string]*Function),
+		globalVarCache: make(map[string]*variable.Variable),
 	}
 }
 
@@ -532,4 +534,77 @@ func (l *Locator) readDebugAddr(addrBase, index uint64) (uint64, error) {
 		return 0, fmt.Errorf("index %d out of bounds in .debug_addr (off=%d len=%d)", index, off, len(l.DebugAddr))
 	}
 	return binary.LittleEndian.Uint64(l.DebugAddr[off:]), nil
+}
+
+func (l *Locator) GetGlobalVariable(varName string) (*variable.Variable, error) {
+	l.mu.RLock()
+	if v, ok := l.globalVarCache[varName]; ok {
+		l.mu.RUnlock()
+		if v == nil {
+			return nil, fmt.Errorf("global variable not found: %s", varName)
+		}
+		return v.Clone(), nil
+	}
+	l.mu.RUnlock()
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	
+	if v, ok := l.globalVarCache[varName]; ok {
+		if v == nil {
+			return nil, fmt.Errorf("global variable not found: %s", varName)
+		}
+		return v.Clone(), nil
+	}
+
+	reader := l.Data.Reader()
+	
+	for {
+		entry, err := reader.Next()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
+		}
+		if entry == nil {
+			break
+		}
+
+		if entry.Tag == dwarf.TagCompileUnit {
+			continue // We don't skip children, we want to look inside CUs
+		}
+
+		if entry.Tag == dwarf.TagSubprogram {
+			if entry.Children {
+				reader.SkipChildren()
+			}
+			continue
+		}
+
+		if entry.Tag == dwarf.TagVariable {
+			name, ok := entry.Val(dwarf.AttrName).(string)
+			if ok && name == varName {
+				typeOffset, _ := entry.Val(dwarf.AttrType).(dwarf.Offset)
+				typ, _ := l.Data.Type(typeOffset)
+
+				locField := entry.Val(dwarf.AttrLocation)
+				if locBlock, ok := locField.([]byte); ok {
+					if len(locBlock) == 9 && locBlock[0] == 0x03 {
+						addr := binary.LittleEndian.Uint64(locBlock[1:])
+						v := variable.NewVariable(name, addr, typ, "Global", locBlock)
+						l.globalVarCache[varName] = v
+						return v.Clone(), nil
+					} else {
+						v := variable.NewVariable(name, 0, typ, "Global (Complex Loc)", locBlock)
+						l.globalVarCache[varName] = v
+						return v.Clone(), nil
+					}
+				}
+			}
+		}
+	}
+
+	l.globalVarCache[varName] = nil
+	return nil, fmt.Errorf("global variable not found: %s", varName)
 }

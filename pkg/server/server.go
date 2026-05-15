@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
+	"github.com/0xbu11/codebull/pkg/function"
 	"github.com/0xbu11/codebull/pkg/harvest"
 	"github.com/0xbu11/codebull/pkg/instrument"
 	"github.com/0xbu11/codebull/pkg/ratelimit"
@@ -58,6 +59,8 @@ type variableInformationResponse struct {
 const (
 	ActionRegister   = "register"
 	ActionUnregister = "unregister"
+	ActionRegisterGlobal   = "register_global_monitor"
+	ActionUnregisterGlobal = "unregister_global_monitor"
 )
 
 var upgrader = websocket.Upgrader{
@@ -76,6 +79,8 @@ type Server struct {
 	removePointByFunctionFn func(functionName string, line int) error
 	removePointByAddressFn  func(functionName string, addr uint64) error
 	listVariablesFn         func(functionName string, line int) ([]variable.VariableDTO, error)
+
+	globalMonitor *GlobalMonitorManager
 }
 
 type wsClient struct {
@@ -88,6 +93,9 @@ func NewServer(manager *instrument.Manager) *Server {
 		manager: manager,
 		clients: make(map[*websocket.Conn]*wsClient),
 	}
+
+	locator, _ := function.NewLocatorForSelf() // Or use manager's locator if available
+	s.globalMonitor = NewGlobalMonitorManager(locator, s.Broadcast)
 
 	harvest.SetOnReport(s.Broadcast)
 
@@ -452,6 +460,14 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 			} else {
 				resp = Response{Status: "success"}
 			}
+
+		case ActionRegisterGlobal:
+			s.globalMonitor.Register(req.Point.VariableNames, req.Point.Line)
+			resp = Response{Status: "success"}
+
+		case ActionUnregisterGlobal:
+			s.globalMonitor.Unregister(req.Point.VariableNames)
+			resp = Response{Status: "success"}
 
 		default:
 			continue
