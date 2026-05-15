@@ -20,6 +20,23 @@ import (
 	"golang.org/x/arch/x86/x86asm"
 )
 
+var blacklist = map[string]struct{}{
+	"runtime.mallocgc":    {},
+	"runtime.newobject":   {},
+	"runtime.makechan":    {},
+	"runtime.chansend1":   {},
+	"runtime.chanrecv1":   {},
+	"runtime.gopark":      {},
+	"runtime.schedule":    {},
+	"runtime.morestack":   {},
+	"runtime.systemstack": {},
+}
+
+func isBlacklisted(name string) bool {
+	_, ok := blacklist[name]
+	return ok
+}
+
 type InstrumentType int
 
 const (
@@ -410,6 +427,9 @@ func (m *Manager) SetCollectorAddr(addr uint64) {
 
 
 func (m *Manager) CreatePoint(fileName, functionName string, line int, variableNames []string, collectStacktrace bool, types []InstrumentType, ratelimitCfg *ratelimit.Config) error {
+	if isBlacklisted(functionName) {
+		return fmt.Errorf("function %s is blacklisted for instrumentation (unsafe runtime function)", functionName)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -500,6 +520,9 @@ func (m *Manager) resolveSafeLineAddress(fn *function.Function, functionName str
 }
 
 func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variableNames []string, collectStacktrace bool, types []InstrumentType, ratelimitCfg *ratelimit.Config) error {
+	if isBlacklisted(functionName) {
+		return fmt.Errorf("function %s is blacklisted for instrumentation (unsafe runtime function)", functionName)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
