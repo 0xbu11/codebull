@@ -5,11 +5,14 @@ package harvest
 import (
 	"fmt"
 	"go/constant"
+	"math/rand"
+	"os"
 	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
@@ -61,6 +64,7 @@ func SetOnReport(fn func(ReportData)) {
 }
 
 func init() {
+	rand.Seed(time.Now().UnixNano())
 	loadOnce.Do(initLocator)
 }
 
@@ -366,7 +370,49 @@ func HarvestPoint(regs *OnStackRegisters) {
 			debugflag.Printf("  %s: %v", v.Name, constantToInterface(v.Value))
 		}
 
-		reportVars = append(reportVars, toVariableValue(v))
+		reportVars = append(reportVars, ToVariableValue(v))
+	}
+
+	if hasVariableFilter {
+		for reqName := range variableFilter {
+			foundLocally := false
+			for _, local := range fnInfo.Variables {
+				if local.Name == reqName || "&"+local.Name == reqName || local.Name == "&"+reqName {
+					foundLocally = true
+					break
+				}
+			}
+
+			if !foundLocally && !strings.HasPrefix(reqName, "&") {
+				sampleRate := 10 // 10% chance
+				if os.Getenv("EGO_SHADOW_DEBUG") == "1" {
+					sampleRate = 100 // 100% chance for tests
+				}
+				if rand.Intn(100) < sampleRate {
+					debugflag.Printf("  Attempting global variable fallback for: %s", reqName)
+					if gv, err := varLocator.GetGlobalVariable(reqName); err == nil {
+						valAddr, evalErr := gv.Evaluate(regs, frameBase, uint64(module.GetOriginalPC(uintptr(pc))))
+						if evalErr != nil {
+							if gv.Addr == 0 {
+								gv.Unreadable = fmt.Errorf("global evaluate failed: %v", evalErr)
+							}
+						} else {
+							gv.Addr = valAddr
+						}
+
+						if gv.Unreadable == nil {
+							gv.LoadValue()
+							debugflag.Printf("  %s (Global): %v", gv.Name, constantToInterface(gv.Value))
+						}
+						reportVars = append(reportVars, ToVariableValue(gv))
+					} else {
+						debugflag.Printf("  Global fallback failed for %s: %v", reqName, err)
+					}
+				} else {
+					debugflag.Printf("  Global variable %s skipped due to random sampling distribution", reqName)
+				}
+			}
+		}
 	}
 
 	TestLogMu.Lock()
@@ -390,7 +436,7 @@ func HarvestPoint(regs *OnStackRegisters) {
 	}
 }
 
-func toVariableValue(v *variable.Variable) VariableValue {
+func ToVariableValue(v *variable.Variable) VariableValue {
 	typeStr := "unknown"
 	if v.Type != nil {
 		typeStr = v.Type.String()
@@ -399,7 +445,7 @@ func toVariableValue(v *variable.Variable) VariableValue {
 	if len(v.Children) > 0 {
 		childrenVals := make([]VariableValue, len(v.Children))
 		for i, child := range v.Children {
-			childrenVals[i] = toVariableValue(child)
+			childrenVals[i] = ToVariableValue(child)
 		}
 		res := VariableValue{
 			Name:     v.Name,

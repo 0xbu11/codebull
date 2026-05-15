@@ -267,20 +267,7 @@ type typeStat struct {
 	Note   string
 }
 
-func findLineContaining(t *testing.T, path, match string) int {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile failed: %v", err)
-	}
-	lines := strings.Split(string(data), "\n")
-	for i, l := range lines {
-		if strings.Contains(l, match) {
-			return i + 1
-		}
-	}
-	t.Fatalf("Match %q not found in %s", match, path)
-	return 0
-}
+
 
 func sortKeys(m map[int][]any) []int {
 	var keys []int
