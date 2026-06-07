@@ -352,7 +352,14 @@ func HarvestPoint(regs *OnStackRegisters) {
 	for _, vTemplate := range fnInfo.Variables {
 		debugflag.Printf("  Found DWARF variable: %s", vTemplate.Name)
 		if hasVariableFilter {
-			if _, ok := variableFilter[vTemplate.Name]; !ok {
+			requested := false
+			for req := range variableFilter {
+				if req == vTemplate.Name || req == "&"+vTemplate.Name || strings.HasPrefix(req, vTemplate.Name+".") {
+					requested = true
+					break
+				}
+			}
+			if !requested {
 				continue
 			}
 		}
@@ -377,7 +384,7 @@ func HarvestPoint(regs *OnStackRegisters) {
 		for reqName := range variableFilter {
 			foundLocally := false
 			for _, local := range fnInfo.Variables {
-				if local.Name == reqName || "&"+local.Name == reqName || local.Name == "&"+reqName {
+				if local.Name == reqName || "&"+local.Name == reqName || local.Name == "&"+reqName || strings.HasPrefix(reqName, local.Name+".") {
 					foundLocally = true
 					break
 				}
