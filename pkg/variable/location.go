@@ -175,8 +175,13 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 
 	debugflag.Printf("DEBUG EVAL: Evaluate Variable %s PC=0x%x frameBase=0x%x MatchedLocExpr=(%x)", v.Name, currPC, frameBase, locExpr)
 
+	type LocationRef struct {
+		Value      uint64
+		IsRegister bool
+	}
+
 	buf := bytes.NewBuffer(locExpr)
-	var stack []uint64
+	var stack []LocationRef
 
 	for buf.Len() > 0 {
 		opcode, err := buf.ReadByte()
@@ -190,7 +195,7 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 			if err := binary.Read(buf, binary.LittleEndian, &addr); err != nil {
 				return 0, err
 			}
-			stack = append(stack, addr)
+			stack = append(stack, LocationRef{Value: addr, IsRegister: false})
 
 		case opcode == DW_OP_fbreg:
 			offset, err := ReadSLEB128(buf)
@@ -198,10 +203,10 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 				return 0, err
 			}
 			addr := uint64(int64(frameBase) + offset)
-			stack = append(stack, addr)
+			stack = append(stack, LocationRef{Value: addr, IsRegister: false})
 
 		case opcode == DW_OP_call_frame_cfa:
-			stack = append(stack, frameBase)
+			stack = append(stack, LocationRef{Value: frameBase, IsRegister: false})
 
 		case opcode >= DW_OP_reg0 && opcode <= DW_OP_reg31:
 			regNum := uint64(opcode - DW_OP_reg0)
@@ -209,10 +214,7 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 			if err != nil {
 				return 0, err
 			}
-			stack = append(stack, val)
-			if len(locExpr) == 1 {
-				v.IsRegister = true
-			}
+			stack = append(stack, LocationRef{Value: val, IsRegister: true})
 
 		case opcode >= DW_OP_breg0 && opcode <= DW_OP_breg31:
 			regNum := uint64(opcode - DW_OP_breg0)
@@ -224,7 +226,7 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 			if err != nil {
 				return 0, err
 			}
-			stack = append(stack, uint64(int64(regVal)+offset))
+			stack = append(stack, LocationRef{Value: uint64(int64(regVal) + offset), IsRegister: false})
 
 		case opcode == DW_OP_regx:
 			regNum, err := ReadULEB128(buf)
@@ -235,10 +237,7 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 			if err != nil {
 				return 0, err
 			}
-			stack = append(stack, val)
-			if buf.Len() == 0 && len(stack) == 1 {
-				v.IsRegister = true
-			}
+			stack = append(stack, LocationRef{Value: val, IsRegister: true})
 
 		case opcode == DW_OP_bregx:
 			regNum, err := ReadULEB128(buf)
@@ -253,15 +252,38 @@ func (v *Variable) Evaluate(regs Regs, frameBase uint64, currPC uint64) (uint64,
 			if err != nil {
 				return 0, err
 			}
-			stack = append(stack, uint64(int64(regVal)+offset))
+			stack = append(stack, LocationRef{Value: uint64(int64(regVal) + offset), IsRegister: false})
+
+		case opcode == 0x93: // DW_OP_piece
+			size, err := ReadULEB128(buf)
+			if err != nil {
+				return 0, err
+			}
+			if len(stack) == 0 {
+				return 0, fmt.Errorf("stack empty for DW_OP_piece")
+			}
+			ref := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			v.Pieces = append(v.Pieces, Piece{
+				Size:       int(size),
+				IsRegister: ref.IsRegister,
+				ValOrAddr:  ref.Value,
+			})
 
 		default:
 			return 0, fmt.Errorf("unsupported opcode in Evaluate: 0x%x", opcode)
 		}
 	}
 
+	if len(v.Pieces) > 0 {
+		return 0, nil
+	}
+
 	if len(stack) == 0 {
 		return 0, fmt.Errorf("stack empty after evaluation")
 	}
-	return stack[len(stack)-1], nil
+	
+	res := stack[len(stack)-1]
+	v.IsRegister = res.IsRegister
+	return res.Value, nil
 }

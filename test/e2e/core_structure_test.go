@@ -98,8 +98,14 @@ func TestCoreDataStructures(t *testing.T) {
 				}
 				
 				if unreadable, ok := v["unreadable"].(string); ok && unreadable != "" {
-					t.Logf("Interface value is unreadable (expected limitation): %s", unreadable)
+					t.Errorf("Interface value should be readable now, got: %s", unreadable)
 				}
+				
+				valStr, _ := v["value"].(string)
+				if len(valStr) < 6 || valStr[:6] != "{type:" {
+					t.Errorf("Expected interface value to start with '{type:', got: %v", valStr)
+				}
+				
 				t.Logf("Successfully captured interface: %+v", v)
 			},
 		},
