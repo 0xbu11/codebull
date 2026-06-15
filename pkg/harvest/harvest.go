@@ -461,6 +461,10 @@ func ToVariableValue(v *variable.Variable) VariableValue {
 		}
 		if v.Kind == reflect.Struct {
 			res.Value = "{...}"
+		} else if v.Kind == reflect.Interface {
+			if v.Value != nil {
+				res.Value = constant.StringVal(v.Value)
+			}
 		} else if v.Kind == reflect.Slice || v.Kind == reflect.Array {
 			res.Value = fmt.Sprintf("len=%d", v.Len)
 		} else if v.Kind == reflect.Ptr || v.Kind == reflect.UnsafePointer {

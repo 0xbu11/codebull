@@ -24,6 +24,12 @@ const (
 
 var MaxDepth = 5
 
+type Piece struct {
+	Size       int
+	IsRegister bool
+	ValOrAddr  uint64
+}
+
 type Variable struct {
 	Name       string
 	Addr       uint64
@@ -35,6 +41,7 @@ type Variable struct {
 	LocDescription string
 	Location       []byte     // Raw DWARF location expression (if simple)
 	LocList        []LocEntry // Location list entries (if location is a list)
+	Pieces         []Piece    // If the variable is split across multiple pieces
 
 	Children   []*Variable
 	Len        int64
@@ -52,6 +59,7 @@ func (v *Variable) ResetRuntimeState() {
 	v.Unreadable = nil
 	v.Children = nil
 	v.Base = 0
+	v.Pieces = nil
 	v.Len = 0
 	v.Cap = 0
 	v.loaded = false
@@ -407,6 +415,37 @@ func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 		}
 		v.Unreadable = fmt.Errorf("unsupported: unexpected complex byte size %d", byteSize)
 
+	case reflect.Interface:
+		if st, ok := resolveTypedef(v.Type).(*dwarf.StructType); ok {
+			var typePtr, dataPtr uint64
+			var typeVar, dataVar *Variable
+			for _, f := range st.Field {
+				if f.Name == "tab" || f.Name == "_type" {
+					typeVar, _ = v.toField(f)
+					typeVar.LoadValueInternal(depth+1, visited)
+					if typeVar.Value != nil {
+						typePtr, _ = constant.Uint64Val(typeVar.Value)
+					}
+					v.Children = append(v.Children, typeVar)
+				} else if f.Name == "data" {
+					dataVar, _ = v.toField(f)
+					dataVar.LoadValueInternal(depth+1, visited)
+					if dataVar.Value != nil {
+						dataPtr, _ = constant.Uint64Val(dataVar.Value)
+					}
+					v.Children = append(v.Children, dataVar)
+				}
+			}
+
+			if typePtr == 0 {
+				v.Value = constant.MakeString("<nil>")
+			} else {
+				v.Value = constant.MakeString(fmt.Sprintf("{type: 0x%x, data: 0x%x}", typePtr, dataPtr))
+			}
+		} else {
+			v.Unreadable = fmt.Errorf("unsupported: expected interface DWARF struct type, got %T", v.Type)
+		}
+
 	case reflect.String:
 		if st, ok := resolveTypedef(v.Type).(*dwarf.StructType); ok {
 			var lenVal int64
@@ -502,7 +541,28 @@ func (v *Variable) loadArrayValues(depth int, visited map[uint64]struct{}) {
 }
 
 func (v *Variable) toField(field *dwarf.StructField) (*Variable, error) {
-	return NewVariable(field.Name, uint64(int64(v.Addr)+field.ByteOffset), field.Type, "", nil), nil
+	child := NewVariable(field.Name, 0, field.Type, "", nil)
+
+	if len(v.Pieces) > 0 {
+		offset := int(field.ByteOffset)
+		currentOffset := 0
+		for _, p := range v.Pieces {
+			if offset >= currentOffset && offset < currentOffset+p.Size {
+				if p.IsRegister {
+					child.IsRegister = true
+					child.Addr = p.ValOrAddr
+				} else {
+					child.Addr = p.ValOrAddr + uint64(offset-currentOffset)
+				}
+				break
+			}
+			currentOffset += p.Size
+		}
+	} else {
+		child.Addr = uint64(int64(v.Addr) + field.ByteOffset)
+	}
+
+	return child, nil
 }
 
 
