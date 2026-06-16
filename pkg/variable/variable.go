@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+t"runtime"
 	"unsafe"
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
@@ -206,6 +207,20 @@ func (v *Variable) isStringType(t *dwarf.StructType) bool {
 		}
 	}
 	return hasStr && hasLen
+}
+
+func isValidTypePtr(ptr uint64) bool {
+	if ptr == 0 {
+		return false
+	}
+	pc, _, _, _ := runtime.Caller(0)
+	f := FindFunc(pc)
+	if !f.Valid() || f.Datap() == nil {
+		return false
+	}
+	types := uint64(f.Datap().Types())
+	etypes := uint64(f.Datap().Etypes())
+	return ptr >= types && ptr < etypes
 }
 
 func (v *Variable) isInterfaceType(t *dwarf.StructType) bool {
@@ -450,13 +465,17 @@ func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 					}
 				}
 
-				var i interface{}
-				e := (*[2]unsafe.Pointer)(unsafe.Pointer(&i))
-				e[0] = unsafe.Pointer(uintptr(actualTypePtr))
-				e[1] = unsafe.Pointer(uintptr(dataPtr))
-
-				valStr := fmt.Sprintf("%v", i)
-				v.Value = constant.MakeString(valStr)
+				if !isValidTypePtr(actualTypePtr) {
+					v.Value = constant.MakeString(fmt.Sprintf("{type: 0x%x, data: 0x%x}", typePtr, dataPtr))
+				} else {
+					var i interface{}
+					e := (*[2]unsafe.Pointer)(unsafe.Pointer(&i))
+					e[0] = unsafe.Pointer(uintptr(actualTypePtr))
+					e[1] = unsafe.Pointer(uintptr(dataPtr))
+	
+					valStr := fmt.Sprintf("%v", i)
+					v.Value = constant.MakeString(valStr)
+				}
 			}
 		} else {
 			v.Unreadable = fmt.Errorf("unsupported: expected interface DWARF struct type, got %T", v.Type)

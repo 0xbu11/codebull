@@ -244,6 +244,14 @@ type moduledata struct {
 	pkghashes  []modulehash
 }
 
+func (m *moduledata) Types() uintptr {
+	return m.types
+}
+
+func (m *moduledata) Etypes() uintptr {
+	return m.etypes
+}
+
 type FuncID uint8
 
 type ptabEntry struct {
