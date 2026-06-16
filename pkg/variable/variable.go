@@ -440,7 +440,23 @@ func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 			if typePtr == 0 {
 				v.Value = constant.MakeString("<nil>")
 			} else {
-				v.Value = constant.MakeString(fmt.Sprintf("{type: 0x%x, data: 0x%x}", typePtr, dataPtr))
+				actualTypePtr := typePtr
+				for _, f := range st.Field {
+					if f.Name == "tab" {
+						tptr, err := readUintRaw(typePtr+8, 8)
+						if err == nil {
+							actualTypePtr = tptr
+						}
+					}
+				}
+
+				var i interface{}
+				e := (*[2]unsafe.Pointer)(unsafe.Pointer(&i))
+				e[0] = unsafe.Pointer(uintptr(actualTypePtr))
+				e[1] = unsafe.Pointer(uintptr(dataPtr))
+
+				valStr := fmt.Sprintf("%v", i)
+				v.Value = constant.MakeString(valStr)
 			}
 		} else {
 			v.Unreadable = fmt.Errorf("unsupported: expected interface DWARF struct type, got %T", v.Type)
