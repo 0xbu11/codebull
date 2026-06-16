@@ -102,8 +102,8 @@ func TestCoreDataStructures(t *testing.T) {
 				}
 				
 				valStr, _ := v["value"].(string)
-				if len(valStr) < 6 || valStr[:6] != "{type:" {
-					t.Errorf("Expected interface value to start with '{type:', got: %v", valStr)
+				if valStr != "test_interface_string" {
+					t.Errorf("Expected interface value to be 'test_interface_string', got: %v", valStr)
 				}
 				
 				t.Logf("Successfully captured interface: %+v", v)
