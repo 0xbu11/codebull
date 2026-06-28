@@ -3,8 +3,6 @@
 package trap
 
 import (
-	"os"
-	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -26,36 +24,7 @@ var (
 	recoverFn   = func(r any) {
 		debugflag.Printf("Recovered panic in callback: %v", r)
 	}
-
-	gcBlockEnabled = os.Getenv("EGO_SHADOW_BLOCK_GC") != "0"
-	gcMu           sync.Mutex
-	gcBlockCount   int
-	gcPrevPercent  int
 )
-
-func blockGC() {
-	if !gcBlockEnabled {
-		return
-	}
-	gcMu.Lock()
-	defer gcMu.Unlock()
-	if gcBlockCount == 0 {
-		gcPrevPercent = debug.SetGCPercent(-1)
-	}
-	gcBlockCount++
-}
-
-func unblockGC() {
-	if !gcBlockEnabled {
-		return
-	}
-	gcMu.Lock()
-	defer gcMu.Unlock()
-	gcBlockCount--
-	if gcBlockCount == 0 {
-		debug.SetGCPercent(gcPrevPercent)
-	}
-}
 
 type collectMessage struct {
 	regs harvest.OnStackRegisters
@@ -93,13 +62,10 @@ func Handler(regs *harvest.OnStackRegisters) {
 		return
 	}
 	print("[SHADOW] Trap hit\n")
-	blockGC()
 	snapshot := *regs
 	snapshot.RSP_Dummy = uint64(uintptr(unsafe.Pointer(&regs.OldRBP))) + 8
 
 	waitChan := make(chan struct{})
-
-	defer unblockGC()
 
 	systemstack(func() {
 		go func(snapshot harvest.OnStackRegisters) {
