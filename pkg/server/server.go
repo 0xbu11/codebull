@@ -133,30 +133,6 @@ func parseCollectStacktrace(value string) (bool, error) {
 	return strconv.ParseBool(value)
 }
 
-func toVariableDTOs(vars []*variable.Variable) []variable.VariableDTO {
-	if len(vars) == 0 {
-		return nil
-	}
-
-	dtos := make([]variable.VariableDTO, 0, len(vars))
-	for _, v := range vars {
-		if v == nil || v.Name == "" {
-			continue
-		}
-
-		typeName := "unknown"
-		if v.Type != nil {
-			typeName = v.Type.String()
-		}
-
-		dtos = append(dtos, variable.VariableDTO{
-			Name: v.Name,
-			Type: typeName,
-		})
-	}
-
-	return dtos
-}
 
 func (s *Server) listVariables(functionName string, line int) ([]variable.VariableDTO, error) {
 	fn, err := s.manager.GetFunction(functionName)
@@ -166,7 +142,7 @@ func (s *Server) listVariables(functionName string, line int) ([]variable.Variab
 
 	_ = line
 
-	return toVariableDTOs(fn.Variables), nil
+	return variable.BuildDTOs(fn.Variables), nil
 }
 
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
