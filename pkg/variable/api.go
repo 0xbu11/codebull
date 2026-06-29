@@ -18,9 +18,13 @@ type VariableDTO struct {
 	Fields   []VariableDTO `json:"fields,omitempty"`
 }
 
-func BuildDTOs(vars []*Variable) []VariableDTO {
+func BuildDTOs(vars []*Variable, maxLayer int) []VariableDTO {
 	if len(vars) == 0 {
 		return nil
+	}
+
+	if maxLayer <= 0 {
+		maxLayer = 5
 	}
 
 	dtos := make([]VariableDTO, 0, len(vars))
@@ -28,12 +32,12 @@ func BuildDTOs(vars []*Variable) []VariableDTO {
 		if v == nil || v.Name == "" {
 			continue
 		}
-		dtos = append(dtos, buildDTO(v.Name, v.Type, 0))
+		dtos = append(dtos, buildDTO(v.Name, v.Type, 0, maxLayer))
 	}
 	return dtos
 }
 
-func buildDTO(name string, t dwarf.Type, depth int) VariableDTO {
+func buildDTO(name string, t dwarf.Type, depth int, maxLayer int) VariableDTO {
 	typeName := "unknown"
 	if t != nil {
 		typeName = t.String()
@@ -44,7 +48,7 @@ func buildDTO(name string, t dwarf.Type, depth int) VariableDTO {
 		Type: typeName,
 	}
 
-	if t == nil || depth > 5 {
+	if t == nil || depth >= maxLayer {
 		return dto
 	}
 
@@ -61,7 +65,7 @@ func buildDTO(name string, t dwarf.Type, depth int) VariableDTO {
 		}
 
 		for _, f := range st.Field {
-			dto.Fields = append(dto.Fields, buildDTO(f.Name, f.Type, depth+1))
+			dto.Fields = append(dto.Fields, buildDTO(f.Name, f.Type, depth+1, maxLayer))
 		}
 	}
 
