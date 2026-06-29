@@ -53,6 +53,7 @@ type variableInformationResponse struct {
 	Status    string                 `json:"status"`
 	Pattern   string                 `json:"pattern"`
 	Line      int                    `json:"line"`
+	Path      string                 `json:"path,omitempty"`
 	Variables []variable.VariableDTO `json:"variables"`
 }
 
@@ -78,7 +79,7 @@ type Server struct {
 	createPointAtAddressFn  func(functionName string, addr uint64, variableNames []string, collectStacktrace bool, types []instrument.InstrumentType, ratelimitCfg *ratelimit.Config) error
 	removePointByFunctionFn func(functionName string, line int) error
 	removePointByAddressFn  func(functionName string, addr uint64) error
-	listVariablesFn         func(functionName string, line int, layer int) ([]variable.VariableDTO, error)
+	listVariablesFn         func(functionName string, line int, layer int, path string) ([]variable.VariableDTO, error)
 
 	globalMonitor *GlobalMonitorManager
 }
@@ -134,7 +135,7 @@ func parseCollectStacktrace(value string) (bool, error) {
 }
 
 
-func (s *Server) listVariables(functionName string, line int, layer int) ([]variable.VariableDTO, error) {
+func (s *Server) listVariables(functionName string, line int, layer int, path string) ([]variable.VariableDTO, error) {
 	fn, err := s.manager.GetFunction(functionName)
 	if err != nil {
 		return nil, err
@@ -142,7 +143,7 @@ func (s *Server) listVariables(functionName string, line int, layer int) ([]vari
 
 	_ = line
 
-	return variable.BuildDTOs(fn.Variables, layer), nil
+	return variable.BuildDTOs(fn.Variables, path, layer)
 }
 
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
@@ -334,14 +335,16 @@ func (s *Server) HandleVariableInformation(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	path := query.Get("path")
+
 	listVariables := s.listVariablesFn
 	if listVariables == nil {
 		listVariables = s.listVariables
 	}
 
-	variables, err := listVariables(pattern, line, layer)
+	variables, err := listVariables(pattern, line, layer, path)
 	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "", fmt.Sprintf("failed to load variable information: %v", err))
+		writeJSONError(w, http.StatusBadRequest, "", err.Error())
 		return
 	}
 
@@ -349,6 +352,7 @@ func (s *Server) HandleVariableInformation(w http.ResponseWriter, r *http.Reques
 		Status:    "ok",
 		Pattern:   pattern,
 		Line:      line,
+		Path:      path,
 		Variables: variables,
 	}
 
