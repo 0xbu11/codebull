@@ -78,7 +78,7 @@ type Server struct {
 	createPointAtAddressFn  func(functionName string, addr uint64, variableNames []string, collectStacktrace bool, types []instrument.InstrumentType, ratelimitCfg *ratelimit.Config) error
 	removePointByFunctionFn func(functionName string, line int) error
 	removePointByAddressFn  func(functionName string, addr uint64) error
-	listVariablesFn         func(functionName string, line int) ([]variable.VariableDTO, error)
+	listVariablesFn         func(functionName string, line int, layer int) ([]variable.VariableDTO, error)
 
 	globalMonitor *GlobalMonitorManager
 }
@@ -133,32 +133,8 @@ func parseCollectStacktrace(value string) (bool, error) {
 	return strconv.ParseBool(value)
 }
 
-func toVariableDTOs(vars []*variable.Variable) []variable.VariableDTO {
-	if len(vars) == 0 {
-		return nil
-	}
 
-	dtos := make([]variable.VariableDTO, 0, len(vars))
-	for _, v := range vars {
-		if v == nil || v.Name == "" {
-			continue
-		}
-
-		typeName := "unknown"
-		if v.Type != nil {
-			typeName = v.Type.String()
-		}
-
-		dtos = append(dtos, variable.VariableDTO{
-			Name: v.Name,
-			Type: typeName,
-		})
-	}
-
-	return dtos
-}
-
-func (s *Server) listVariables(functionName string, line int) ([]variable.VariableDTO, error) {
+func (s *Server) listVariables(functionName string, line int, layer int) ([]variable.VariableDTO, error) {
 	fn, err := s.manager.GetFunction(functionName)
 	if err != nil {
 		return nil, err
@@ -166,7 +142,7 @@ func (s *Server) listVariables(functionName string, line int) ([]variable.Variab
 
 	_ = line
 
-	return toVariableDTOs(fn.Variables), nil
+	return variable.BuildDTOs(fn.Variables, layer), nil
 }
 
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
@@ -351,12 +327,19 @@ func (s *Server) HandleVariableInformation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	layer := 0
+	if layerStr := query.Get("layer"); layerStr != "" {
+		if l, err := strconv.Atoi(layerStr); err == nil {
+			layer = l
+		}
+	}
+
 	listVariables := s.listVariablesFn
 	if listVariables == nil {
 		listVariables = s.listVariables
 	}
 
-	variables, err := listVariables(pattern, line)
+	variables, err := listVariables(pattern, line, layer)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "", fmt.Sprintf("failed to load variable information: %v", err))
 		return

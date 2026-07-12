@@ -209,18 +209,84 @@ func (v *Variable) isStringType(t *dwarf.StructType) bool {
 	return hasStr && hasLen
 }
 
+func agentModuleTypesRange() (types, etypes uint64, ok bool) {
+	pc, _, _, _ := runtime.Caller(0)
+	f := FindFunc(pc)
+	if !f.Valid() || f.Datap() == nil {
+		return 0, 0, false
+	}
+	return uint64(f.Datap().Types()), uint64(f.Datap().Etypes()), true
+}
+
 func isValidTypePtr(ptr uint64) bool {
 	if ptr == 0 {
 		return false
 	}
-	pc, _, _, _ := runtime.Caller(0)
-	f := FindFunc(pc)
-	if !f.Valid() || f.Datap() == nil {
+	types, etypes, ok := agentModuleTypesRange()
+	if !ok {
 		return false
 	}
-	types := uint64(f.Datap().Types())
-	etypes := uint64(f.Datap().Etypes())
 	return ptr >= types && ptr < etypes
+}
+
+const (
+	rtypeTFlagOffset = 20
+	rtypeKindOffset  = 23
+	rtypeStrOffset   = 40
+	tflagExtraStar   = 1 << 1
+	kindMask         = (1 << 5) - 1
+)
+
+func resolveRuntimeTypeName(typePtr uint64) (string, bool) {
+	types, etypes, ok := agentModuleTypesRange()
+	if !ok || typePtr < types || typePtr >= etypes {
+		return "", false
+	}
+
+	kindByte, err := readUintRaw(typePtr+rtypeKindOffset, 1)
+	if err != nil {
+		return "", false
+	}
+	kind := kindByte & kindMask
+	if kind == 0 || kind > uint64(reflect.UnsafePointer) {
+		return "", false
+	}
+
+	strOff, err := readIntRaw(typePtr+rtypeStrOffset, 4)
+	if err != nil {
+		return "", false
+	}
+	nameAddr := types + uint64(strOff)
+	if strOff < 0 || nameAddr < types || nameAddr >= etypes {
+		return "", false
+	}
+
+	head, err := readMemory(uintptr(nameAddr+1), 4)
+	if err != nil {
+		return "", false
+	}
+	nameLen, varintLen := binary.Uvarint(head)
+	if varintLen <= 0 || nameLen == 0 || nameLen > 512 {
+		return "", false
+	}
+	nameBytes, err := readMemory(uintptr(nameAddr+1+uint64(varintLen)), int(nameLen))
+	if err != nil {
+		return "", false
+	}
+	name := string(nameBytes)
+
+	tflag, err := readUintRaw(typePtr+rtypeTFlagOffset, 1)
+	if err == nil && tflag&tflagExtraStar != 0 && len(name) > 0 && name[0] == '*' {
+		name = name[1:]
+	}
+	return name, true
+}
+
+func formatInterfaceValue(actualTypePtr, typePtr, dataPtr uint64) string {
+	if name, ok := resolveRuntimeTypeName(actualTypePtr); ok {
+		return fmt.Sprintf("%s(data: 0x%x)", name, dataPtr)
+	}
+	return fmt.Sprintf("{type: 0x%x, data: 0x%x}", typePtr, dataPtr)
 }
 
 func (v *Variable) isInterfaceType(t *dwarf.StructType) bool {
@@ -465,17 +531,7 @@ func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 					}
 				}
 
-				if !isValidTypePtr(actualTypePtr) {
-					v.Value = constant.MakeString(fmt.Sprintf("{type: 0x%x, data: 0x%x}", typePtr, dataPtr))
-				} else {
-					var i interface{}
-					e := (*[2]unsafe.Pointer)(unsafe.Pointer(&i))
-					e[0] = unsafe.Pointer(uintptr(actualTypePtr))
-					e[1] = unsafe.Pointer(uintptr(dataPtr))
-	
-					valStr := fmt.Sprintf("%v", i)
-					v.Value = constant.MakeString(valStr)
-				}
+				v.Value = constant.MakeString(formatInterfaceValue(actualTypePtr, typePtr, dataPtr))
 			}
 		} else {
 			v.Unreadable = fmt.Errorf("unsupported: expected interface DWARF struct type, got %T", v.Type)
