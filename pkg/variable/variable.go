@@ -618,9 +618,13 @@ func (v *Variable) loadArrayValues(depth int, visited map[uint64]struct{}) {
 	}
 
 	count := v.Len
-	if count > 100 {
-		count = 100
-	} // Cap array display
+	cap := int64(100)
+	if v.stride == 1 {
+		cap = 512
+	}
+	if count > cap {
+		count = cap
+	}
 
 	for i := int64(0); i < count; i++ {
 		offset := uint64(i * v.stride)

@@ -553,14 +553,8 @@ func readPclnBytes(datap *moduledata, offset uint32, table int, mapping []PCMapE
 			}
 
 			if strategy == InjectStackDelta {
-				if rebuilt, ok := rebuildPCSPForTrampoline(newEntry, t, valBefore, valAfter); ok && len(rebuilt) > 0 {
-					for _, e := range rebuilt {
-						appendStaged(e.Offset, e.Value, sourceTrampBody)
-					}
-				} else {
-					appendStaged(tStart, valBefore, sourceTrampStart)
-					appendStaged(tEnd, valBefore+int32(t.StackDelta), sourceTrampBody)
-				}
+				appendStaged(tStart, valBefore, sourceTrampStart)
+				appendStaged(tEnd, valBefore+int32(t.StackDelta), sourceTrampBody)
 			} else {
 				appendStaged(tStart, valBefore, sourceTrampStart)
 				if table == int(_PCDATA_UnsafePoint) {
