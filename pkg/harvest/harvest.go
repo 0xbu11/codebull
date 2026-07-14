@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
@@ -447,6 +448,34 @@ func HarvestPoint(regs *OnStackRegisters) {
 	}
 }
 
+func byteSliceString(v *variable.Variable) (string, bool) {
+	if len(v.Children) == 0 {
+		return "", false
+	}
+	buf := make([]byte, 0, len(v.Children))
+	for _, child := range v.Children {
+		if child.Kind != reflect.Uint && child.Kind != reflect.Uint8 {
+			return "", false
+		}
+		if child.Value == nil || child.Type == nil || child.Type.Common() == nil || child.Type.Common().ByteSize != 1 {
+			return "", false
+		}
+		b, ok := constant.Uint64Val(child.Value)
+		if !ok || b > 0xff {
+			return "", false
+		}
+		buf = append(buf, byte(b))
+	}
+	s := string(buf)
+	if !utf8.ValidString(s) {
+		return "", false
+	}
+	if int64(len(v.Children)) < v.Len {
+		s += "…"
+	}
+	return s, true
+}
+
 func ToVariableValue(v *variable.Variable) VariableValue {
 	cv := toVariableValueFiltered(v, "", nil, true)
 	if cv == nil {
@@ -530,7 +559,11 @@ func toVariableValueFiltered(v *variable.Variable, currentPath string, filter ma
 				res.Value = constant.StringVal(v.Value)
 			}
 		} else if v.Kind == reflect.Slice || v.Kind == reflect.Array {
-			res.Value = fmt.Sprintf("len=%d", v.Len)
+			if s, ok := byteSliceString(v); ok {
+				res.Value = s
+			} else {
+				res.Value = fmt.Sprintf("len=%d", v.Len)
+			}
 		} else if v.Kind == reflect.Ptr || v.Kind == reflect.UnsafePointer {
 			if addr, ok := constant.Uint64Val(v.Value); ok {
 				res.Value = fmt.Sprintf("0x%x", addr)
