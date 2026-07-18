@@ -10,6 +10,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/0xbu11/codebull/pkg/duration"
 	"github.com/0xbu11/codebull/pkg/function"
 	"github.com/0xbu11/codebull/pkg/guard"
 	"github.com/0xbu11/codebull/pkg/module"
@@ -45,6 +46,7 @@ const (
 	Logging InstrumentType = iota
 	Metric
 	Profiling
+	Duration
 )
 
 func (t InstrumentType) String() string {
@@ -55,6 +57,8 @@ func (t InstrumentType) String() string {
 		return "Metric"
 	case Profiling:
 		return "Profiling"
+	case Duration:
+		return "Duration"
 	default:
 		return "Unknown"
 	}
@@ -127,6 +131,7 @@ type Point struct {
 	Types             []InstrumentType
 	Status            PointStatus
 	RateLimit         *ratelimit.Config
+	PairID uint64
 }
 
 type Manager struct {
@@ -466,6 +471,10 @@ func (m *Manager) CreatePoint(fileName, functionName string, line int, variableN
 		return fmt.Errorf("failed to resolve address for line %d in %s: %w", line, functionName, err)
 	}
 
+	if meta, ok := duration.LookupPC(addr); ok {
+		return fmt.Errorf("address 0x%x already belongs to duration pair %d; remove it before adding a log point", addr, meta.PairID)
+	}
+
 	variableNames = normalizeVariableNames(variableNames)
 
 	p := Point{
@@ -555,6 +564,10 @@ func (m *Manager) CreatePointAtAddress(functionName string, addr uint64, variabl
 
 	if addr < fn.Entry || addr >= fn.End {
 		return fmt.Errorf("address 0x%x is outside function %s [0x%x, 0x%x)", addr, functionName, fn.Entry, fn.End)
+	}
+
+	if meta, ok := duration.LookupPC(addr); ok {
+		return fmt.Errorf("address 0x%x already belongs to duration pair %d; remove it before adding a log point", addr, meta.PairID)
 	}
 
 	variableNames = normalizeVariableNames(variableNames)
@@ -654,6 +667,9 @@ func (m *Manager) RemovePoint(fileName string, line int) error {
 	affected := make(map[uint64]struct{})
 	for i := range m.points {
 		for j := range m.points[i] {
+			if m.points[i][j].PairID != 0 {
+				continue
+			}
 			if m.points[i][j].File == fileName && m.points[i][j].Line == line && m.points[i][j].Status == PointActive {
 				found = true
 				m.points[i][j].Status = PointSoftDeleted
@@ -684,6 +700,9 @@ func (m *Manager) RemovePointByAddress(functionName string, addr uint64) error {
 
 	found := false
 	for i := range points {
+		if points[i].PairID != 0 {
+			continue
+		}
 		if points[i].Address == addr && points[i].Status == PointActive {
 			found = true
 			points[i].Status = PointSoftDeleted
@@ -711,6 +730,9 @@ func (m *Manager) RemovePointByFunction(functionName string, line int) error {
 	found := false
 	affected := make(map[uint64]struct{})
 	for i := range points {
+		if points[i].PairID != 0 {
+			continue
+		}
 		if points[i].Line == line && points[i].Status == PointActive {
 			found = true
 			points[i].Status = PointSoftDeleted

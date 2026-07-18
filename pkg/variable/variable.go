@@ -237,41 +237,41 @@ const (
 	kindMask         = (1 << 5) - 1
 )
 
-func resolveRuntimeTypeName(typePtr uint64) (string, bool) {
+func resolveRuntimeTypeName(typePtr uint64) (string, uint64, bool) {
 	types, etypes, ok := agentModuleTypesRange()
 	if !ok || typePtr < types || typePtr >= etypes {
-		return "", false
+		return "", 0, false
 	}
 
 	kindByte, err := readUintRaw(typePtr+rtypeKindOffset, 1)
 	if err != nil {
-		return "", false
+		return "", 0, false
 	}
 	kind := kindByte & kindMask
 	if kind == 0 || kind > uint64(reflect.UnsafePointer) {
-		return "", false
+		return "", 0, false
 	}
 
 	strOff, err := readIntRaw(typePtr+rtypeStrOffset, 4)
 	if err != nil {
-		return "", false
+		return "", 0, false
 	}
 	nameAddr := types + uint64(strOff)
 	if strOff < 0 || nameAddr < types || nameAddr >= etypes {
-		return "", false
+		return "", 0, false
 	}
 
 	head, err := readMemory(uintptr(nameAddr+1), 4)
 	if err != nil {
-		return "", false
+		return "", 0, false
 	}
 	nameLen, varintLen := binary.Uvarint(head)
 	if varintLen <= 0 || nameLen == 0 || nameLen > 512 {
-		return "", false
+		return "", 0, false
 	}
 	nameBytes, err := readMemory(uintptr(nameAddr+1+uint64(varintLen)), int(nameLen))
 	if err != nil {
-		return "", false
+		return "", 0, false
 	}
 	name := string(nameBytes)
 
@@ -279,14 +279,41 @@ func resolveRuntimeTypeName(typePtr uint64) (string, bool) {
 	if err == nil && tflag&tflagExtraStar != 0 && len(name) > 0 && name[0] == '*' {
 		name = name[1:]
 	}
-	return name, true
+	return name, kind, true
 }
 
 func formatInterfaceValue(actualTypePtr, typePtr, dataPtr uint64) string {
-	if name, ok := resolveRuntimeTypeName(actualTypePtr); ok {
+	if name, kind, ok := resolveRuntimeTypeName(actualTypePtr); ok {
+		if kind == uint64(reflect.String) && dataPtr != 0 {
+			if s, ok := readBoxedString(dataPtr); ok {
+				return s
+			}
+		}
 		return fmt.Sprintf("%s(data: 0x%x)", name, dataPtr)
 	}
 	return fmt.Sprintf("{type: 0x%x, data: 0x%x}", typePtr, dataPtr)
+}
+
+func readBoxedString(headerPtr uint64) (string, bool) {
+	strPtr, err := readUintRaw(headerPtr, 8)
+	if err != nil || strPtr == 0 {
+		return "", false
+	}
+	strLen, err := readUintRaw(headerPtr+8, 8)
+	if err != nil {
+		return "", false
+	}
+	if strLen == 0 {
+		return "", true
+	}
+	if strLen > 1024 {
+		strLen = 1024 // cap string read, matching reflect.String path
+	}
+	b, err := readMemory(uintptr(strPtr), int(strLen))
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
 }
 
 func (v *Variable) isInterfaceType(t *dwarf.StructType) bool {
