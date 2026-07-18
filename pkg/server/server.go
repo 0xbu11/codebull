@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
+	"github.com/0xbu11/codebull/pkg/duration"
 	"github.com/0xbu11/codebull/pkg/function"
 	"github.com/0xbu11/codebull/pkg/harvest"
 	"github.com/0xbu11/codebull/pkg/instrument"
@@ -47,6 +48,14 @@ type traceStatusResponse struct {
 	CollectStacktrace bool     `json:"collect_stacktrace"`
 	Types             []string           `json:"types,omitempty"`
 	RateLimit         *ratelimit.Config  `json:"rate_limit,omitempty"`
+	EndLine           int                `json:"end_line,omitempty"`
+	Duration          *durationStatus    `json:"duration,omitempty"`
+}
+
+type durationStatus struct {
+	PairID       uint64 `json:"pair_id"`
+	PendingPairs int    `json:"pending_pairs"`
+	duration.Stats
 }
 
 type variableInformationResponse struct {
@@ -79,6 +88,8 @@ type Server struct {
 	removePointByFunctionFn func(functionName string, line int) error
 	removePointByAddressFn  func(functionName string, addr uint64) error
 	listVariablesFn         func(functionName string, line int, layer int) ([]variable.VariableDTO, error)
+	createDurationPointFn   func(fileName, functionName string, line, endLine int, ratelimitCfg *ratelimit.Config) error
+	removeDurationPointFn   func(functionName string, line, endLine int) error
 
 	globalMonitor *GlobalMonitorManager
 }
@@ -98,6 +109,17 @@ func NewServer(manager *instrument.Manager) *Server {
 	s.globalMonitor = NewGlobalMonitorManager(locator, s.Broadcast)
 
 	harvest.SetOnReport(s.Broadcast)
+
+	duration.SetOnSample(func(sm duration.Sample) {
+		s.Broadcast(harvest.ReportData{
+			FunctionName: sm.FunctionName,
+			Line:         sm.EntryLine,
+			Variables: []harvest.VariableValue{
+				{Name: "__duration_ns", Value: strconv.FormatInt(sm.DurationNs, 10), Type: "int64"},
+				{Name: "__goid", Value: strconv.FormatInt(sm.Goid, 10), Type: "int64"},
+			},
+		})
+	})
 
 	return s
 }
@@ -148,7 +170,10 @@ func (s *Server) listVariables(functionName string, line int, layer int) ([]vari
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"name": "Ego Shadow Process"})
+	json.NewEncoder(w).Encode(map[string]any{
+		"name": "Ego Shadow Process",
+		"duration_available": duration.RuntimeHooksReady(),
+	})
 }
 
 func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
@@ -178,6 +203,21 @@ func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
 
 	var line int
 	fmt.Sscanf(lineStr, "%d", &line)
+
+	pointType := query.Get("type")
+	endLine := 0
+	if raw := query.Get("end_line"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			http.Error(w, "end_line must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		endLine = parsed
+	}
+	if pointType == "duration" && (r.Method == "GET" || r.Method == "DELETE") {
+		s.handleDurationTrace(w, r, pattern, line, endLine)
+		return
+	}
 
 	if r.Method == "GET" {
 		createPoint := s.createPointFn
@@ -238,6 +278,41 @@ func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleDurationTrace(w http.ResponseWriter, r *http.Request, pattern string, line, endLine int) {
+	if endLine <= 0 {
+		http.Error(w, "end_line is required for type=duration", http.StatusBadRequest)
+		return
+	}
+
+	if r.Method == "GET" {
+		createDuration := s.createDurationPointFn
+		if createDuration == nil {
+			createDuration = s.manager.CreateDurationPoint
+		}
+		if err := createDuration("", pattern, line, endLine, nil); err != nil {
+			code, status := classifyError(err)
+			writeJSONError(w, status, code, fmt.Sprintf("failed to register duration trace: %v", err))
+			debugflag.Printf("Failed to register duration trace %s:%d-%d: %v", pattern, line, endLine, err)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		debugflag.Printf("Registered duration trace: %s:%d-%d", pattern, line, endLine)
+		return
+	}
+
+	removeDuration := s.removeDurationPointFn
+	if removeDuration == nil {
+		removeDuration = s.manager.RemoveDurationPoint
+	}
+	if err := removeDuration(pattern, line, endLine); err != nil {
+		code, status := classifyError(err)
+		writeJSONError(w, status, code, fmt.Sprintf("failed to unregister duration trace: %v", err))
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	debugflag.Printf("Unregistered duration trace: %s:%d-%d", pattern, line, endLine)
+}
+
 func (s *Server) HandleTraceStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -288,6 +363,16 @@ func (s *Server) HandleTraceStatus(w http.ResponseWriter, r *http.Request) {
 			resp.Types = append(resp.Types, t.String())
 		}
 		resp.RateLimit = point.RateLimit
+		if point.PairID != 0 {
+			if meta, ok := duration.LookupPC(point.Address); ok {
+				resp.EndLine = meta.EndLine
+			}
+			resp.Duration = &durationStatus{
+				PairID:       point.PairID,
+				PendingPairs: duration.PendingCount(point.PairID),
+				Stats:        duration.GetStats(),
+			}
+		}
 		break
 	}
 

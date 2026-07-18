@@ -11,6 +11,7 @@ import (
 	_ "unsafe" // For linkname
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
+	"github.com/0xbu11/codebull/pkg/duration"
 	"github.com/0xbu11/codebull/pkg/harvest"
 )
 
@@ -90,6 +91,9 @@ func startCollectorWorker() {
 //go:nosplit
 func Handler(regs *harvest.OnStackRegisters) {
 	if regs == nil {
+		return
+	}
+	if duration.HandleHit(regs.RIP) {
 		return
 	}
 	blockGC()
