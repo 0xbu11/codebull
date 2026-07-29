@@ -760,3 +760,24 @@ func (m *Manager) GetPoints(function string) []Point {
 	copy(result, points)
 	return result
 }
+
+// NamedPoint is an active point together with the pattern it was registered
+// under. Reporting uses the registered pattern rather than the runtime symbol
+// name so callers can join results back to the tracepoint they created.
+type NamedPoint struct {
+	Pattern string
+	Point   Point
+}
+
+// AllPoints returns every active point across all functions.
+func (m *Manager) AllPoints() []NamedPoint {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []NamedPoint
+	for pattern, points := range m.points {
+		for _, point := range collectActivePoints(points) {
+			result = append(result, NamedPoint{Pattern: pattern, Point: point})
+		}
+	}
+	return result
+}

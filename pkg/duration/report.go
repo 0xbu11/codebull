@@ -32,16 +32,20 @@ func emitSample(meta *PointMeta, gid, durationNs int64) {
 		DurationNs:   durationNs,
 		ExitPC:       meta.ExitPC,
 	}
+	// Count the hit at the exit trap rather than after the queue, so a pair that
+	// is dropped for either reason below still shows up in the hit count.
+	ratelimit.Global().CountHit(meta.ExitPC)
 	select {
 	case sampleCh <- s:
 	default:
 		cDroppedSamples.Add(1)
+		ratelimit.Global().CountDrop(meta.ExitPC)
 	}
 }
 
 func sampleLoop() {
 	for s := range sampleCh {
-		if !ratelimit.Global().Allow(s.ExitPC) {
+		if !ratelimit.Global().Decide(s.ExitPC) {
 			continue
 		}
 		if fn := onSample; fn != nil {

@@ -287,8 +287,11 @@ func HarvestPoint(regs *OnStackRegisters) {
 		return
 	}
 
-	if !ratelimit.Global().Allow(pc) {
-		debugflag.Printf("Rate limit hit at PC=0x%x", pc)
+	// The hit is counted inside Observe before the limiter runs, so a sampled
+	// point still reports an exact hit count and stays reconcilable against the
+	// observed service's own counters.
+	if !ratelimit.Global().Observe(pc) {
+		debugflag.Printf("Rate limit dropped event at PC=0x%x", pc)
 		return
 	}
 
