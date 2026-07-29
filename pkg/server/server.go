@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +53,27 @@ type traceStatusResponse struct {
 	RateLimit         *ratelimit.Config  `json:"rate_limit,omitempty"`
 	EndLine           int                `json:"end_line,omitempty"`
 	Duration          *durationStatus    `json:"duration,omitempty"`
+	Sampling          *samplingStatus    `json:"sampling,omitempty"`
+}
+
+// samplingStatus tells a caller how much of what happened it is actually
+// looking at. Hits is exact; Collected is what survived the limiter.
+type samplingStatus struct {
+	Hits      int64   `json:"hits"`
+	Collected int64   `json:"collected"`
+	Dropped   int64   `json:"dropped"`
+	Ratio     float64 `json:"ratio"`
+	Complete  bool    `json:"complete"`
+}
+
+func buildSamplingStatus(s ratelimit.Stats) *samplingStatus {
+	return &samplingStatus{
+		Hits:      s.Hits,
+		Collected: s.Allowed,
+		Dropped:   s.Dropped,
+		Ratio:     s.SamplingRatio(),
+		Complete:  s.Complete(),
+	}
 }
 
 type durationStatus struct {
@@ -155,6 +179,42 @@ func parseCollectStacktrace(value string) (bool, error) {
 	return strconv.ParseBool(value)
 }
 
+// parseRateLimitQuery reads an optional per-point budget off the registration
+// URL. Without it the point inherits the registry default, which is applied per
+// point rather than shared, so attaching another point never shrinks this one's
+// budget.
+func parseRateLimitQuery(query url.Values) (*ratelimit.Config, error) {
+	rateStr := query.Get("rate")
+	if rateStr == "" {
+		return nil, nil
+	}
+
+	rate, err := strconv.ParseFloat(rateStr, 64)
+	if err != nil || rate < 0 {
+		return nil, fmt.Errorf("rate must be a non-negative number")
+	}
+
+	cfg := ratelimit.Config{Algorithm: "token_bucket", Rate: rate}
+	if algo := query.Get("rate_algorithm"); algo != "" {
+		cfg.Algorithm = algo
+	}
+	if burstStr := query.Get("burst"); burstStr != "" {
+		burst, err := strconv.Atoi(burstStr)
+		if err != nil || burst < 0 {
+			return nil, fmt.Errorf("burst must be a non-negative integer")
+		}
+		cfg.Burst = burst
+	}
+	if windowStr := query.Get("rate_window_ms"); windowStr != "" {
+		ms, err := strconv.Atoi(windowStr)
+		if err != nil || ms <= 0 {
+			return nil, fmt.Errorf("rate_window_ms must be a positive integer")
+		}
+		cfg.Window = time.Duration(ms) * time.Millisecond
+	}
+	return &cfg, nil
+}
+
 
 func (s *Server) listVariables(functionName string, line int, layer int) ([]variable.VariableDTO, error) {
 	fn, err := s.manager.GetFunction(functionName)
@@ -195,6 +255,11 @@ func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "collect_stacktrace must be a valid boolean", http.StatusBadRequest)
 		return
 	}
+	rateLimitCfg, err := parseRateLimitQuery(query)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if pattern == "" || lineStr == "" {
 		http.Error(w, "pattern and line are required", http.StatusBadRequest)
@@ -215,7 +280,7 @@ func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
 		endLine = parsed
 	}
 	if pointType == "duration" && (r.Method == "GET" || r.Method == "DELETE") {
-		s.handleDurationTrace(w, r, pattern, line, endLine)
+		s.handleDurationTrace(w, r, pattern, line, endLine, rateLimitCfg)
 		return
 	}
 
@@ -224,7 +289,7 @@ func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
 		if createPoint == nil {
 			createPoint = s.manager.CreatePoint
 		}
-		if err := createPoint("", pattern, line, variableNames, collectStacktrace, []instrument.InstrumentType{instrument.Logging}, nil); err != nil {
+		if err := createPoint("", pattern, line, variableNames, collectStacktrace, []instrument.InstrumentType{instrument.Logging}, rateLimitCfg); err != nil {
 			code, status := classifyError(err)
 			writeJSONError(w, status, code, fmt.Sprintf("failed to register trace: %v", err))
 			debugflag.Printf("Failed to register trace %s:%d: %v", pattern, line, err)
@@ -278,7 +343,7 @@ func (s *Server) HandleTrace(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleDurationTrace(w http.ResponseWriter, r *http.Request, pattern string, line, endLine int) {
+func (s *Server) handleDurationTrace(w http.ResponseWriter, r *http.Request, pattern string, line, endLine int, rateLimitCfg *ratelimit.Config) {
 	if endLine <= 0 {
 		http.Error(w, "end_line is required for type=duration", http.StatusBadRequest)
 		return
@@ -289,7 +354,7 @@ func (s *Server) handleDurationTrace(w http.ResponseWriter, r *http.Request, pat
 		if createDuration == nil {
 			createDuration = s.manager.CreateDurationPoint
 		}
-		if err := createDuration("", pattern, line, endLine, nil); err != nil {
+		if err := createDuration("", pattern, line, endLine, rateLimitCfg); err != nil {
 			code, status := classifyError(err)
 			writeJSONError(w, status, code, fmt.Sprintf("failed to register duration trace: %v", err))
 			debugflag.Printf("Failed to register duration trace %s:%d-%d: %v", pattern, line, endLine, err)
@@ -362,7 +427,16 @@ func (s *Server) HandleTraceStatus(w http.ResponseWriter, r *http.Request) {
 		for _, t := range point.Types {
 			resp.Types = append(resp.Types, t.String())
 		}
-		resp.RateLimit = point.RateLimit
+		// Duration pairs are accounted at the exit trap, so the counters for a
+		// latency point live under its exit PC rather than the entry address.
+		statsPC := point.Address
+		if point.PairID != 0 {
+			if meta, ok := duration.LookupPC(point.Address); ok && meta.ExitPC != 0 {
+				statsPC = meta.ExitPC
+			}
+		}
+		resp.RateLimit = ratelimit.Global().GetConfig(statsPC)
+		resp.Sampling = buildSamplingStatus(ratelimit.Global().StatsFor(statsPC))
 		if point.PairID != 0 {
 			if meta, ok := duration.LookupPC(point.Address); ok {
 				resp.EndLine = meta.EndLine
@@ -618,14 +692,91 @@ func (s *Server) HandleRateLimitStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	reg := ratelimit.Global()
+	snap := reg.Snapshot()
+
+	// Resolve each counted address back to the pattern/line it was registered
+	// under, so a caller can join these counters onto its own tracepoint list.
+	// A latency pair is accounted at its exit trap, so map that address too.
+	type located struct {
+		pattern string
+		line    int
+	}
+	byPC := make(map[uint64]located)
+	for _, np := range s.manager.AllPoints() {
+		byPC[np.Point.Address] = located{pattern: np.Pattern, line: np.Point.Line}
+		if np.Point.PairID != 0 {
+			if meta, ok := duration.LookupPC(np.Point.Address); ok && meta.ExitPC != 0 {
+				byPC[meta.ExitPC] = located{pattern: np.Pattern, line: np.Point.Line}
+			}
+		}
+	}
+
+	points := make([]ratePointStatus, 0, len(snap.Points))
+	for _, p := range snap.Points {
+		ps := ratePointStatus{
+			PC:            fmt.Sprintf("0x%x", p.PC),
+			Config:        p.Config,
+			Explicit:      p.Explicit,
+			Hits:          p.Hits,
+			Collected:     p.Allowed,
+			Dropped:       p.Dropped,
+			SamplingRatio: p.SamplingRatio(),
+		}
+		if loc, ok := byPC[p.PC]; ok {
+			ps.Function = loc.pattern
+			ps.Line = loc.line
+		} else {
+			if fn := runtime.FuncForPC(uintptr(p.PC)); fn != nil {
+				ps.Function = strings.TrimPrefix(fn.Name(), "shadow-")
+			}
+			if line, ok := instrument.GetPointLineAtPC(p.PC); ok {
+				ps.Line = line
+			}
+		}
+		points = append(points, ps)
+	}
+	sort.Slice(points, func(i, j int) bool {
+		if points[i].Dropped != points[j].Dropped {
+			return points[i].Dropped > points[j].Dropped
+		}
+		return points[i].Function < points[j].Function
+	})
+
 	resp := map[string]interface{}{
 		"status": "ok",
-		"global": reg.GetDefaultConfig(),
-		"points": reg.GetAllConfigs(),
+		// "global" keeps its original meaning for existing clients: the config a
+		// point gets when it has none of its own. It is now applied per point.
+		"global":          snap.Default,
+		"default":         snap.Default,
+		"scope":           "per_point",
+		"ceiling":         snap.Ceiling,
+		"ceiling_dropped": snap.CeilingDropped,
+		"since":           snap.Since.UTC().Format(time.RFC3339Nano),
+		"totals": map[string]interface{}{
+			"hits":      snap.Totals.Hits,
+			"collected": snap.Totals.Allowed,
+			"dropped":   snap.Totals.Dropped,
+			"complete":  snap.Totals.Complete(),
+		},
+		"points": points,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// ratePointStatus is one instrumented address as reported by /ratelimit/status.
+// Counters are cumulative since `since`; diff two reads for a window.
+type ratePointStatus struct {
+	PC            string           `json:"pc"`
+	Function      string           `json:"function,omitempty"`
+	Line          int              `json:"line,omitempty"`
+	Config        ratelimit.Config `json:"config"`
+	Explicit      bool             `json:"explicit"`
+	Hits          int64            `json:"hits"`
+	Collected     int64            `json:"collected"`
+	Dropped       int64            `json:"dropped"`
+	SamplingRatio float64          `json:"sampling_ratio"`
 }
 
 func (s *Server) HandleRateLimitUpdate(w http.ResponseWriter, r *http.Request) {
@@ -643,12 +794,62 @@ func (s *Server) HandleRateLimitUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var cfg ratelimit.Config
-	if err := json.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	var body struct {
+		ratelimit.Config
+		// Scope selects what the config applies to: "default" (every point
+		// without its own budget), "ceiling" (the process-wide safety net), or
+		// "point" together with pattern/line.
+		Scope   string `json:"scope,omitempty"`
+		Pattern string `json:"pattern,omitempty"`
+		Line    int    `json:"line,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	ratelimit.Global().SetDefaultLimiter(&cfg)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	cfg := body.Config
+	switch body.Scope {
+	case "", "default", "global":
+		ratelimit.Global().SetDefaultLimiter(&cfg)
+		json.NewEncoder(w).Encode(map[string]any{"status": "ok", "scope": "default", "applied": cfg})
+
+	case "ceiling":
+		ratelimit.Global().SetCeilingLimiter(&cfg)
+		json.NewEncoder(w).Encode(map[string]any{"status": "ok", "scope": "ceiling", "applied": cfg})
+
+	case "point":
+		if body.Pattern == "" || body.Line <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+				"scope=point needs pattern and line naming an attached tracepoint")
+			return
+		}
+		applied := 0
+		for _, point := range s.manager.GetPoints(body.Pattern) {
+			if point.Line != body.Line {
+				continue
+			}
+			pc := point.Address
+			if point.PairID != 0 {
+				if meta, ok := duration.LookupPC(point.Address); ok && meta.ExitPC != 0 {
+					pc = meta.ExitPC
+				}
+			}
+			ratelimit.Global().Register(pc, cfg)
+			applied++
+		}
+		if applied == 0 {
+			writeJSONError(w, http.StatusNotFound, "NOT_FOUND",
+				fmt.Sprintf("no tracepoint attached at %s:%d", body.Pattern, body.Line))
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"status": "ok", "scope": "point",
+			"pattern": body.Pattern, "line": body.Line, "applied": cfg,
+		})
+
+	default:
+		writeJSONError(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+			fmt.Sprintf("unknown scope %q; expected default, ceiling or point", body.Scope))
+	}
 }
