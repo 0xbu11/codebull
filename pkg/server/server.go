@@ -39,6 +39,7 @@ type Response struct {
 
 const (
 	ErrCodeCopyLimitExceeded = "COPY_LIMIT_EXCEEDED"
+	ErrCodeNotFound          = "NOT_FOUND"
 )
 
 type traceStatusResponse struct {
@@ -628,6 +629,13 @@ func (s *Server) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 func classifyError(err error) (string, int) {
 	if errors.Is(err, codebull.ErrCopyFunctionLimitExceeded) {
 		return ErrCodeCopyLimitExceeded, http.StatusTooManyRequests
+	}
+	// Removing something that is already gone is not a failure. Saying so
+	// distinctly is what lets a client make removal idempotent instead of
+	// having to choose between retrying forever and claiming a success it
+	// never verified.
+	if errors.Is(err, instrument.ErrNotFound) {
+		return ErrCodeNotFound, http.StatusNotFound
 	}
 	return "", http.StatusInternalServerError
 }
