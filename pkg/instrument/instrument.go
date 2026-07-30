@@ -4,6 +4,7 @@ package instrument
 
 import (
 	"debug/elf"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -120,6 +121,13 @@ func (s PointStatus) String() string {
 		return "unknown"
 	}
 }
+
+// ErrNotFound marks a removal that had nothing to remove: the function was
+// never instrumented, or no point is attached at that location. Callers need to
+// tell this apart from a genuine failure — removing something that is already
+// gone is a success, and a client that cannot make that distinction has to
+// choose between retrying forever and reporting success it did not verify.
+var ErrNotFound = errors.New("not found")
 
 type Point struct {
 	File              string
@@ -679,7 +687,7 @@ func (m *Manager) RemovePoint(fileName string, line int) error {
 	}
 
 	if !found {
-		return fmt.Errorf("point not found at %s:%d", fileName, line)
+		return fmt.Errorf("point not found at %s:%d: %w", fileName, line, ErrNotFound)
 	}
 
 	for addr := range affected {
@@ -695,7 +703,7 @@ func (m *Manager) RemovePointByAddress(functionName string, addr uint64) error {
 
 	points, ok := m.points[functionName]
 	if !ok {
-		return fmt.Errorf("function %s not instrumented", functionName)
+		return fmt.Errorf("function %s not instrumented: %w", functionName, ErrNotFound)
 	}
 
 	found := false
@@ -710,7 +718,7 @@ func (m *Manager) RemovePointByAddress(functionName string, addr uint64) error {
 	}
 
 	if !found {
-		return fmt.Errorf("point not found in %s at address 0x%x", functionName, addr)
+		return fmt.Errorf("point not found in %s at address 0x%x: %w", functionName, addr, ErrNotFound)
 	}
 
 	m.refreshPCStatusByAddressLocked(addr)
@@ -724,7 +732,7 @@ func (m *Manager) RemovePointByFunction(functionName string, line int) error {
 
 	points, ok := m.points[functionName]
 	if !ok {
-		return fmt.Errorf("function %s not instrumented", functionName)
+		return fmt.Errorf("function %s not instrumented: %w", functionName, ErrNotFound)
 	}
 
 	found := false
@@ -741,7 +749,7 @@ func (m *Manager) RemovePointByFunction(functionName string, line int) error {
 	}
 
 	if !found {
-		return fmt.Errorf("point not found in %s at line %d", functionName, line)
+		return fmt.Errorf("point not found in %s at line %d: %w", functionName, line, ErrNotFound)
 	}
 
 	for addr := range affected {
