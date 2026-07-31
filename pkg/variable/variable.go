@@ -209,18 +209,111 @@ func (v *Variable) isStringType(t *dwarf.StructType) bool {
 	return hasStr && hasLen
 }
 
+func agentModuleTypesRange() (types, etypes uint64, ok bool) {
+	pc, _, _, _ := runtime.Caller(0)
+	f := FindFunc(pc)
+	if !f.Valid() || f.Datap() == nil {
+		return 0, 0, false
+	}
+	return uint64(f.Datap().Types()), uint64(f.Datap().Etypes()), true
+}
+
 func isValidTypePtr(ptr uint64) bool {
 	if ptr == 0 {
 		return false
 	}
-	pc, _, _, _ := runtime.Caller(0)
-	f := FindFunc(pc)
-	if !f.Valid() || f.Datap() == nil {
+	types, etypes, ok := agentModuleTypesRange()
+	if !ok {
 		return false
 	}
-	types := uint64(f.Datap().Types())
-	etypes := uint64(f.Datap().Etypes())
 	return ptr >= types && ptr < etypes
+}
+
+const (
+	rtypeTFlagOffset = 20
+	rtypeKindOffset  = 23
+	rtypeStrOffset   = 40
+	tflagExtraStar   = 1 << 1
+	kindMask         = (1 << 5) - 1
+)
+
+func resolveRuntimeTypeName(typePtr uint64) (string, uint64, bool) {
+	types, etypes, ok := agentModuleTypesRange()
+	if !ok || typePtr < types || typePtr >= etypes {
+		return "", 0, false
+	}
+
+	kindByte, err := readUintRaw(typePtr+rtypeKindOffset, 1)
+	if err != nil {
+		return "", 0, false
+	}
+	kind := kindByte & kindMask
+	if kind == 0 || kind > uint64(reflect.UnsafePointer) {
+		return "", 0, false
+	}
+
+	strOff, err := readIntRaw(typePtr+rtypeStrOffset, 4)
+	if err != nil {
+		return "", 0, false
+	}
+	nameAddr := types + uint64(strOff)
+	if strOff < 0 || nameAddr < types || nameAddr >= etypes {
+		return "", 0, false
+	}
+
+	head, err := readMemory(uintptr(nameAddr+1), 4)
+	if err != nil {
+		return "", 0, false
+	}
+	nameLen, varintLen := binary.Uvarint(head)
+	if varintLen <= 0 || nameLen == 0 || nameLen > 512 {
+		return "", 0, false
+	}
+	nameBytes, err := readMemory(uintptr(nameAddr+1+uint64(varintLen)), int(nameLen))
+	if err != nil {
+		return "", 0, false
+	}
+	name := string(nameBytes)
+
+	tflag, err := readUintRaw(typePtr+rtypeTFlagOffset, 1)
+	if err == nil && tflag&tflagExtraStar != 0 && len(name) > 0 && name[0] == '*' {
+		name = name[1:]
+	}
+	return name, kind, true
+}
+
+func formatInterfaceValue(actualTypePtr, typePtr, dataPtr uint64) string {
+	if name, kind, ok := resolveRuntimeTypeName(actualTypePtr); ok {
+		if kind == uint64(reflect.String) && dataPtr != 0 {
+			if s, ok := readBoxedString(dataPtr); ok {
+				return s
+			}
+		}
+		return fmt.Sprintf("%s(data: 0x%x)", name, dataPtr)
+	}
+	return fmt.Sprintf("{type: 0x%x, data: 0x%x}", typePtr, dataPtr)
+}
+
+func readBoxedString(headerPtr uint64) (string, bool) {
+	strPtr, err := readUintRaw(headerPtr, 8)
+	if err != nil || strPtr == 0 {
+		return "", false
+	}
+	strLen, err := readUintRaw(headerPtr+8, 8)
+	if err != nil {
+		return "", false
+	}
+	if strLen == 0 {
+		return "", true
+	}
+	if strLen > 1024 {
+		strLen = 1024 // cap string read, matching reflect.String path
+	}
+	b, err := readMemory(uintptr(strPtr), int(strLen))
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
 }
 
 func (v *Variable) isInterfaceType(t *dwarf.StructType) bool {
@@ -465,17 +558,7 @@ func (v *Variable) LoadValueInternal(depth int, visited map[uint64]struct{}) {
 					}
 				}
 
-				if !isValidTypePtr(actualTypePtr) {
-					v.Value = constant.MakeString(fmt.Sprintf("{type: 0x%x, data: 0x%x}", typePtr, dataPtr))
-				} else {
-					var i interface{}
-					e := (*[2]unsafe.Pointer)(unsafe.Pointer(&i))
-					e[0] = unsafe.Pointer(uintptr(actualTypePtr))
-					e[1] = unsafe.Pointer(uintptr(dataPtr))
-	
-					valStr := fmt.Sprintf("%v", i)
-					v.Value = constant.MakeString(valStr)
-				}
+				v.Value = constant.MakeString(formatInterfaceValue(actualTypePtr, typePtr, dataPtr))
 			}
 		} else {
 			v.Unreadable = fmt.Errorf("unsupported: expected interface DWARF struct type, got %T", v.Type)
@@ -562,9 +645,13 @@ func (v *Variable) loadArrayValues(depth int, visited map[uint64]struct{}) {
 	}
 
 	count := v.Len
-	if count > 100 {
-		count = 100
-	} // Cap array display
+	cap := int64(100)
+	if v.stride == 1 {
+		cap = 512
+	}
+	if count > cap {
+		count = cap
+	}
 
 	for i := int64(0); i < count; i++ {
 		offset := uint64(i * v.stride)

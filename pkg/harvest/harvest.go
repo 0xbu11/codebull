@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 	"unsafe"
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
@@ -286,8 +287,11 @@ func HarvestPoint(regs *OnStackRegisters) {
 		return
 	}
 
-	if !ratelimit.Global().Allow(pc) {
-		debugflag.Printf("Rate limit hit at PC=0x%x", pc)
+	// The hit is counted inside Observe before the limiter runs, so a sampled
+	// point still reports an exact hit count and stays reconcilable against the
+	// observed service's own counters.
+	if !ratelimit.Global().Observe(pc) {
+		debugflag.Printf("Rate limit dropped event at PC=0x%x", pc)
 		return
 	}
 
@@ -377,7 +381,9 @@ func HarvestPoint(regs *OnStackRegisters) {
 			debugflag.Printf("  %s: %v", v.Name, constantToInterface(v.Value))
 		}
 
-		reportVars = append(reportVars, ToVariableValue(v))
+		if cv := toVariableValueFiltered(v, "", variableFilter, !hasVariableFilter); cv != nil {
+			reportVars = append(reportVars, *cv)
+		}
 	}
 
 	if hasVariableFilter {
@@ -411,7 +417,9 @@ func HarvestPoint(regs *OnStackRegisters) {
 							gv.LoadValue()
 							debugflag.Printf("  %s (Global): %v", gv.Name, constantToInterface(gv.Value))
 						}
-						reportVars = append(reportVars, ToVariableValue(gv))
+						if cv := toVariableValueFiltered(gv, "", variableFilter, !hasVariableFilter); cv != nil {
+							reportVars = append(reportVars, *cv)
+						}
 					} else {
 						debugflag.Printf("  Global fallback failed for %s: %v", reqName, err)
 					}
@@ -443,17 +451,105 @@ func HarvestPoint(regs *OnStackRegisters) {
 	}
 }
 
+func byteSliceString(v *variable.Variable) (string, bool) {
+	if len(v.Children) == 0 {
+		return "", false
+	}
+	buf := make([]byte, 0, len(v.Children))
+	for _, child := range v.Children {
+		if child.Kind != reflect.Uint && child.Kind != reflect.Uint8 {
+			return "", false
+		}
+		if child.Value == nil || child.Type == nil || child.Type.Common() == nil || child.Type.Common().ByteSize != 1 {
+			return "", false
+		}
+		b, ok := constant.Uint64Val(child.Value)
+		if !ok || b > 0xff {
+			return "", false
+		}
+		buf = append(buf, byte(b))
+	}
+	s := string(buf)
+	if !utf8.ValidString(s) {
+		return "", false
+	}
+	if int64(len(v.Children)) < v.Len {
+		s += "…"
+	}
+	return s, true
+}
+
 func ToVariableValue(v *variable.Variable) VariableValue {
+	cv := toVariableValueFiltered(v, "", nil, true)
+	if cv == nil {
+		return VariableValue{} // should not happen if includeAll is true
+	}
+	return *cv
+}
+
+func toVariableValueFiltered(v *variable.Variable, currentPath string, filter map[string]struct{}, includeAll bool) *VariableValue {
 	typeStr := "unknown"
 	if v.Type != nil {
 		typeStr = v.Type.String()
 	}
 
-	if len(v.Children) > 0 {
-		childrenVals := make([]VariableValue, len(v.Children))
-		for i, child := range v.Children {
-			childrenVals[i] = ToVariableValue(child)
+	var nodePath string
+	if currentPath == "" {
+		nodePath = v.Name
+	} else if v.Name == "" {
+		nodePath = currentPath
+	} else if strings.HasPrefix(v.Name, "[") {
+		nodePath = currentPath + v.Name
+	} else {
+		nodePath = currentPath + "." + v.Name
+	}
+
+	nodeIncludeAll := includeAll
+	if filter != nil && !nodeIncludeAll {
+		if _, ok := filter[nodePath]; ok {
+			nodeIncludeAll = true
+		} else if _, ok := filter["&"+nodePath]; ok {
+			nodeIncludeAll = true
+		} else if strings.HasPrefix(nodePath, "&") {
+			if _, ok := filter[nodePath[1:]]; ok {
+				nodeIncludeAll = true
+			}
 		}
+	}
+
+	if len(v.Children) > 0 {
+		childrenVals := make([]VariableValue, 0, len(v.Children))
+		for _, child := range v.Children {
+			childPath := nodePath
+			if child.Name != "" {
+				if strings.HasPrefix(child.Name, "[") {
+					childPath += child.Name
+				} else {
+					childPath += "." + child.Name
+				}
+			}
+
+			keep := nodeIncludeAll
+			if !keep && filter != nil {
+				for req := range filter {
+					if req == childPath || strings.HasPrefix(req, childPath+".") || strings.HasPrefix(req, childPath+"[") {
+						keep = true
+						break
+					}
+					if req == "&"+childPath || strings.HasPrefix(req, "&"+childPath+".") || strings.HasPrefix(req, "&"+childPath+"[") {
+						keep = true
+						break
+					}
+				}
+			}
+
+			if keep {
+				if cv := toVariableValueFiltered(child, nodePath, filter, nodeIncludeAll); cv != nil {
+					childrenVals = append(childrenVals, *cv)
+				}
+			}
+		}
+		
 		res := VariableValue{
 			Name:     v.Name,
 			Children: childrenVals,
@@ -466,17 +562,21 @@ func ToVariableValue(v *variable.Variable) VariableValue {
 				res.Value = constant.StringVal(v.Value)
 			}
 		} else if v.Kind == reflect.Slice || v.Kind == reflect.Array {
-			res.Value = fmt.Sprintf("len=%d", v.Len)
+			if s, ok := byteSliceString(v); ok {
+				res.Value = s
+			} else {
+				res.Value = fmt.Sprintf("len=%d", v.Len)
+			}
 		} else if v.Kind == reflect.Ptr || v.Kind == reflect.UnsafePointer {
 			if addr, ok := constant.Uint64Val(v.Value); ok {
 				res.Value = fmt.Sprintf("0x%x", addr)
 			}
 		}
-		return res
+		return &res
 	}
 
 	if v.Unreadable != nil {
-		return VariableValue{
+		return &VariableValue{
 			Name:       v.Name,
 			Value:      fmt.Sprintf("<Error: %v>", v.Unreadable),
 			Type:       typeStr,
@@ -484,7 +584,7 @@ func ToVariableValue(v *variable.Variable) VariableValue {
 		}
 	}
 
-	return VariableValue{
+	return &VariableValue{
 		Name:  v.Name,
 		Value: fmt.Sprintf("%v", constantToInterface(v.Value)),
 		Type:  typeStr,

@@ -11,6 +11,7 @@ import (
 	_ "unsafe" // For linkname
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
+	"github.com/0xbu11/codebull/pkg/duration"
 	"github.com/0xbu11/codebull/pkg/harvest"
 )
 
@@ -92,8 +93,11 @@ func Handler(regs *harvest.OnStackRegisters) {
 	if regs == nil {
 		return
 	}
-	print("[SHADOW] Trap hit\n")
+	if duration.HandleHit(regs.RIP) {
+		return
+	}
 	blockGC()
+	debugflag.Printf("[SHADOW] Trap hit")
 	snapshot := *regs
 	snapshot.RSP_Dummy = uint64(uintptr(unsafe.Pointer(&regs.OldRBP))) + 8
 
