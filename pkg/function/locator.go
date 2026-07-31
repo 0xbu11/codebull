@@ -74,6 +74,99 @@ func NewLocatorForSelf() (*Locator, error) {
 	return NewLocator(d, nil, debugLoc, debugLocLists, debugAddr), nil
 }
 
+// nameMatches reports whether a DWARF symbol name refers to the requested
+// function. The request is usually unqualified ("pkg.Func"), the symbol fully
+// qualified ("example.com/mod/pkg.Func").
+func nameMatches(symbol, wanted string) bool {
+	return symbol == wanted ||
+		strings.HasSuffix(symbol, "."+wanted) ||
+		strings.HasSuffix(symbol, "/"+wanted) // unlikely for Go but possible
+}
+
+// splitSymbol separates a Go symbol into its package path and the rest — the
+// receiver and method, or the bare function name.
+//
+//	github.com/dgraph-io/ristretto/v2.(*defaultPolicy[V]).Add
+//	→ "github.com/dgraph-io/ristretto/v2", "(*defaultPolicy[V]).Add"
+func splitSymbol(name string) (pkgPath, rest string) {
+	start := strings.LastIndex(name, "/") + 1
+	dot := strings.Index(name[start:], ".")
+	if dot < 0 {
+		return "", name
+	}
+	cut := start + dot
+	return name[:cut], name[cut+1:]
+}
+
+// looseMatches reports whether a DWARF symbol refers to the requested function
+// when the request was derived from source and cannot be expected to match
+// character for character.
+//
+// Two things make the source form differ from the compiled one. A generic
+// function carries its shape rather than its declared type parameters. And a
+// module published under a major-version path ends in that version, so the
+// package the source calls `ristretto` appears as `.../ristretto/v2` — a plain
+// suffix match looks for `.ristretto.` and never finds it.
+//
+// Both are handled by comparing the receiver and method with type arguments
+// removed, and requiring the requested package name to be one of the symbol's
+// path elements. That still refuses a same-named method on a different type, a
+// different method on the same type, and the same pairing in another package.
+func looseMatches(symbol, wanted string) bool {
+	symbolPkg, symbolRest := splitSymbol(symbol)
+	wantedPkg, wantedRest := splitSymbol(wanted)
+
+	if stripTypeArgs(symbolRest) != stripTypeArgs(wantedRest) {
+		return false
+	}
+	if wantedPkg == "" {
+		return true
+	}
+	if symbolPkg == wantedPkg {
+		return true
+	}
+	for _, element := range strings.Split(symbolPkg, "/") {
+		if element == wantedPkg {
+			return true
+		}
+	}
+	return false
+}
+
+// stripTypeArgs removes every bracketed type argument list from a function
+// name, so instantiations can be compared to the source form:
+//
+//	(*defaultPolicy[go.shape.string]).Add  →  (*defaultPolicy[]).Add
+//	(*defaultPolicy[V]).Add               →  (*defaultPolicy[]).Add
+//
+// Brackets are matched by depth: a type argument can itself be a map or slice
+// type and contain brackets of its own.
+func stripTypeArgs(name string) string {
+	if !strings.ContainsRune(name, '[') {
+		return name
+	}
+	var out strings.Builder
+	depth := 0
+	for _, r := range name {
+		switch r {
+		case '[':
+			depth++
+			if depth == 1 {
+				out.WriteString("[]")
+			}
+		case ']':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if depth == 0 {
+				out.WriteRune(r)
+			}
+		}
+	}
+	return out.String()
+}
+
 func (l *Locator) GetFunction(funcName string) (*Function, error) {
 	l.mu.RLock()
 	if fn, ok := l.funcCache[funcName]; ok {
@@ -88,6 +181,15 @@ func (l *Locator) GetFunction(funcName string) (*Function, error) {
 	if fn, ok := l.funcCache[funcName]; ok {
 		return fn, nil
 	}
+
+	// A generic function is compiled per shape, and its DWARF name carries that
+	// shape rather than the type parameters the source declares:
+	// `(*defaultPolicy[V]).Add` in the file is `(*defaultPolicy[go.shape.string]).Add`
+	// in the binary. A caller naming a location from source cannot know the
+	// shape, so fall back to comparing with type arguments removed — but only
+	// when the requested name has type arguments at all. There is no reason to
+	// widen matching for ordinary functions.
+	normalizedWanted := stripTypeArgs(funcName)
 
 	reader := l.Data.Reader()
 
@@ -129,14 +231,10 @@ const (
 				continue
 			}
 
-			match := false
-			if name == funcName {
-				match = true
-			} else if strings.HasSuffix(name, "."+funcName) {
-				match = true
-			} else if strings.HasSuffix(name, "/"+funcName) { // unlikely for Go but possible
-				match = true
-			}
+			// Exact first, then the tolerant comparison for names derived from
+			// source: generic shapes and major-version module paths both make
+			// the compiled name differ from what the file says.
+			match := nameMatches(name, funcName) || looseMatches(name, funcName)
 
 			if match {
 				fn := &Function{
@@ -197,6 +295,11 @@ const (
 		}
 	}
 
+	if normalizedWanted != funcName {
+		return nil, fmt.Errorf(
+			"function not found: %s (also tried ignoring type arguments, as %s; a generic function is compiled per shape and appears in the binary as e.g. Type[go.shape.string])",
+			funcName, normalizedWanted)
+	}
 	return nil, fmt.Errorf("function not found: %s", funcName)
 }
 
