@@ -136,7 +136,7 @@ func (m *Manager) RemoveDurationPoint(functionName string, line, endLine int) er
 
 	points, ok := m.points[functionName]
 	if !ok {
-		return fmt.Errorf("function %s not instrumented: %w", functionName, ErrNotFound)
+		return fmt.Errorf("function %s not instrumented", functionName)
 	}
 
 	var pairID uint64
@@ -148,7 +148,7 @@ func (m *Manager) RemoveDurationPoint(functionName string, line, endLine int) er
 		}
 	}
 	if pairID == 0 {
-		return fmt.Errorf("duration point not found in %s at line %d: %w", functionName, line, ErrNotFound)
+		return fmt.Errorf("duration point not found in %s at line %d", functionName, line)
 	}
 
 	for i := range points {
