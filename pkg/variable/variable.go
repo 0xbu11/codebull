@@ -12,6 +12,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"strconv"
 	"unsafe"
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
@@ -292,9 +293,50 @@ func formatInterfaceValue(actualTypePtr, typePtr, dataPtr uint64) string {
 				return s
 			}
 		}
+		if s, ok := readBoxedScalar(kind, dataPtr); ok {
+			return fmt.Sprintf("%s(%s)", name, s)
+		}
 		return fmt.Sprintf("%s(data: 0x%x)", name, dataPtr)
 	}
 	return fmt.Sprintf("{type: 0x%x, data: 0x%x}", typePtr, dataPtr)
+}
+
+func readBoxedScalar(kind uint64, dataPtr uint64) (string, bool) {
+	if dataPtr == 0 {
+		return "", false
+	}
+	size := 0
+	switch reflect.Kind(kind) {
+	case reflect.Bool, reflect.Int8, reflect.Uint8:
+		size = 1
+	case reflect.Int16, reflect.Uint16:
+		size = 2
+	case reflect.Int32, reflect.Uint32, reflect.Float32:
+		size = 4
+	case reflect.Int, reflect.Int64, reflect.Uint, reflect.Uint64, reflect.Uintptr, reflect.Float64:
+		size = 8
+	default:
+		return "", false
+	}
+
+	raw, err := readUintRaw(dataPtr, size)
+	if err != nil {
+		return "", false
+	}
+
+	switch reflect.Kind(kind) {
+	case reflect.Bool:
+		return fmt.Sprintf("%t", raw != 0), true
+	case reflect.Float32:
+		return strconv.FormatFloat(float64(math.Float32frombits(uint32(raw))), 'g', -1, 32), true
+	case reflect.Float64:
+		return strconv.FormatFloat(math.Float64frombits(raw), 'g', -1, 64), true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		shift := uint(64 - size*8)
+		return strconv.FormatInt(int64(raw<<shift)>>shift, 10), true
+	default:
+		return strconv.FormatUint(raw, 10), true
+	}
 }
 
 func readBoxedString(headerPtr uint64) (string, bool) {
