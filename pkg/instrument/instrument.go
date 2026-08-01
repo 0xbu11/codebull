@@ -4,7 +4,6 @@ package instrument
 
 import (
 	"debug/elf"
-	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -121,13 +120,6 @@ func (s PointStatus) String() string {
 		return "unknown"
 	}
 }
-
-// ErrNotFound marks a removal that had nothing to remove: the function was
-// never instrumented, or no point is attached at that location. Callers need to
-// tell this apart from a genuine failure — removing something that is already
-// gone is a success, and a client that cannot make that distinction has to
-// choose between retrying forever and reporting success it did not verify.
-var ErrNotFound = errors.New("not found")
 
 type Point struct {
 	File              string
@@ -687,7 +679,7 @@ func (m *Manager) RemovePoint(fileName string, line int) error {
 	}
 
 	if !found {
-		return fmt.Errorf("point not found at %s:%d: %w", fileName, line, ErrNotFound)
+		return fmt.Errorf("point not found at %s:%d", fileName, line)
 	}
 
 	for addr := range affected {
@@ -703,7 +695,7 @@ func (m *Manager) RemovePointByAddress(functionName string, addr uint64) error {
 
 	points, ok := m.points[functionName]
 	if !ok {
-		return fmt.Errorf("function %s not instrumented: %w", functionName, ErrNotFound)
+		return fmt.Errorf("function %s not instrumented", functionName)
 	}
 
 	found := false
@@ -718,7 +710,7 @@ func (m *Manager) RemovePointByAddress(functionName string, addr uint64) error {
 	}
 
 	if !found {
-		return fmt.Errorf("point not found in %s at address 0x%x: %w", functionName, addr, ErrNotFound)
+		return fmt.Errorf("point not found in %s at address 0x%x", functionName, addr)
 	}
 
 	m.refreshPCStatusByAddressLocked(addr)
@@ -732,7 +724,7 @@ func (m *Manager) RemovePointByFunction(functionName string, line int) error {
 
 	points, ok := m.points[functionName]
 	if !ok {
-		return fmt.Errorf("function %s not instrumented: %w", functionName, ErrNotFound)
+		return fmt.Errorf("function %s not instrumented", functionName)
 	}
 
 	found := false
@@ -749,7 +741,7 @@ func (m *Manager) RemovePointByFunction(functionName string, line int) error {
 	}
 
 	if !found {
-		return fmt.Errorf("point not found in %s at line %d: %w", functionName, line, ErrNotFound)
+		return fmt.Errorf("point not found in %s at line %d", functionName, line)
 	}
 
 	for addr := range affected {
@@ -766,26 +758,5 @@ func (m *Manager) GetPoints(function string) []Point {
 	points := collectActivePoints(m.points[k])
 	result := make([]Point, len(points))
 	copy(result, points)
-	return result
-}
-
-// NamedPoint is an active point together with the pattern it was registered
-// under. Reporting uses the registered pattern rather than the runtime symbol
-// name so callers can join results back to the tracepoint they created.
-type NamedPoint struct {
-	Pattern string
-	Point   Point
-}
-
-// AllPoints returns every active point across all functions.
-func (m *Manager) AllPoints() []NamedPoint {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	var result []NamedPoint
-	for pattern, points := range m.points {
-		for _, point := range collectActivePoints(points) {
-			result = append(result, NamedPoint{Pattern: pattern, Point: point})
-		}
-	}
 	return result
 }
