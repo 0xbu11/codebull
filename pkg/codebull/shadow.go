@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -40,6 +41,27 @@ func (e *CopyFunctionError) Is(target error) bool {
 }
 
 var ErrCopyFunctionLimitExceeded = &CopyFunctionError{Code: CopyFunctionLimitExceededCode}
+
+// CopyFunctionHardLimit is the number of copies one process is allowed. The
+// enforcing counter lives in the native layer and is deliberately hard to
+// reach; this is the same number, kept here only so the figure can be reported.
+const CopyFunctionHardLimit = 20
+
+// copyFunctionCalls counts the copies this process has asked for.
+//
+// The native counter only ever increments — releasing a tracepoint does not
+// give the slot back — and it is not readable from outside, so a user could
+// not see how much of the budget they had spent until a registration failed.
+// This wrapper is the only caller of CopyFunction in the process, so counting
+// here gives the same number without touching the enforcement path.
+var copyFunctionCalls atomic.Int64
+
+// CopyFunctionUsage reports how much of the per-process copy budget has been
+// spent. Removing a tracepoint does not decrease `used`: the budget counts
+// copies made, not points currently installed.
+func CopyFunctionUsage() (used int, limit int, refundsOnRemoval bool) {
+	return int(copyFunctionCalls.Load()), CopyFunctionHardLimit, false
+}
 
 func init() {
 	version := C.CString(runtime.Version())
@@ -103,6 +125,9 @@ func CreateShadowFunctionFromBytes(start, end uint64, sourceBytes []byte, collec
 		cCollectorAddr = unsafe.Pointer(uintptr(collectorAddr))
 	}
 
+	// Count before the call, matching the native counter: it increments on
+	// entry, so a rejected copy still spends a slot.
+	copyFunctionCalls.Add(1)
 	ret := C.CopyFunction(
 		unsafe.Pointer(uintptr(start)),
 		unsafe.Pointer(uintptr(end)),
