@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime"
+	"sync/atomic"
 	"unsafe"
 )
 
@@ -40,6 +41,14 @@ func (e *CopyFunctionError) Is(target error) bool {
 }
 
 var ErrCopyFunctionLimitExceeded = &CopyFunctionError{Code: CopyFunctionLimitExceededCode}
+
+const CopyFunctionHardLimit = 20
+
+var copyFunctionCalls atomic.Int64
+
+func CopyFunctionUsage() (used int, limit int, refundsOnRemoval bool) {
+	return int(copyFunctionCalls.Load()), CopyFunctionHardLimit, false
+}
 
 func init() {
 	version := C.CString(runtime.Version())
@@ -103,6 +112,7 @@ func CreateShadowFunctionFromBytes(start, end uint64, sourceBytes []byte, collec
 		cCollectorAddr = unsafe.Pointer(uintptr(collectorAddr))
 	}
 
+	copyFunctionCalls.Add(1)
 	ret := C.CopyFunction(
 		unsafe.Pointer(uintptr(start)),
 		unsafe.Pointer(uintptr(end)),

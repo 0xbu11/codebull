@@ -39,17 +39,17 @@ const (
 )
 
 type traceStatusResponse struct {
-	Status            string   `json:"status"`
-	Pattern           string   `json:"pattern"`
-	Line              int      `json:"line"`
-	Instrumented      bool     `json:"instrumented"`
-	Address           uint64   `json:"address,omitempty"`
-	VariableNames     []string `json:"variable_names,omitempty"`
-	CollectStacktrace bool     `json:"collect_stacktrace"`
-	Types             []string           `json:"types,omitempty"`
-	RateLimit         *ratelimit.Config  `json:"rate_limit,omitempty"`
-	EndLine           int                `json:"end_line,omitempty"`
-	Duration          *durationStatus    `json:"duration,omitempty"`
+	Status            string            `json:"status"`
+	Pattern           string            `json:"pattern"`
+	Line              int               `json:"line"`
+	Instrumented      bool              `json:"instrumented"`
+	Address           uint64            `json:"address,omitempty"`
+	VariableNames     []string          `json:"variable_names,omitempty"`
+	CollectStacktrace bool              `json:"collect_stacktrace"`
+	Types             []string          `json:"types,omitempty"`
+	RateLimit         *ratelimit.Config `json:"rate_limit,omitempty"`
+	EndLine           int               `json:"end_line,omitempty"`
+	Duration          *durationStatus   `json:"duration,omitempty"`
 }
 
 type durationStatus struct {
@@ -66,8 +66,8 @@ type variableInformationResponse struct {
 }
 
 const (
-	ActionRegister   = "register"
-	ActionUnregister = "unregister"
+	ActionRegister         = "register"
+	ActionUnregister       = "unregister"
 	ActionRegisterGlobal   = "register_global_monitor"
 	ActionUnregisterGlobal = "unregister_global_monitor"
 )
@@ -155,7 +155,6 @@ func parseCollectStacktrace(value string) (bool, error) {
 	return strconv.ParseBool(value)
 }
 
-
 func (s *Server) listVariables(functionName string, line int, layer int) ([]variable.VariableDTO, error) {
 	fn, err := s.manager.GetFunction(functionName)
 	if err != nil {
@@ -170,9 +169,17 @@ func (s *Server) listVariables(functionName string, line int, layer int) ([]vari
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	used, limit, refunds := codebull.CopyFunctionUsage()
 	json.NewEncoder(w).Encode(map[string]any{
 		"name": "Ego Shadow Process",
 		"duration_available": duration.RuntimeHooksReady(),
+		"copy_budget": map[string]any{
+			"used":               used,
+			"limit":              limit,
+			"remaining":          max(limit-used, 0),
+			"refunds_on_removal": refunds,
+			"note":               "Counts function copies made, not points currently installed. Removing a tracepoint does not return a slot, and re-registering the same function spends another.",
+		},
 	})
 }
 
