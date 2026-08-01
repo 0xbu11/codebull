@@ -44,9 +44,10 @@ type Variable struct {
 	LocList        []LocEntry // Location list entries (if location is a list)
 	Pieces         []Piece    // If the variable is split across multiple pieces
 
-	Children   []*Variable
-	Len        int64
-	Cap        int64
+	Children []*Variable
+	Len      int64
+	Cap      int64
+	capRead    bool
 	Base       uint64
 	stride     int64
 	fieldType  dwarf.Type
@@ -63,6 +64,7 @@ func (v *Variable) ResetRuntimeState() {
 	v.Pieces = nil
 	v.Len = 0
 	v.Cap = 0
+	v.capRead = false
 	v.loaded = false
 	v.IsRegister = false
 	if v.Type != nil {
@@ -121,6 +123,7 @@ func (v *Variable) initializeType() {
 		v.Kind = reflect.Array
 		v.Len = t.Count
 		v.Cap = t.Count
+		v.capRead = true
 		v.fieldType = t.Type
 		if t.Count > 0 {
 			v.stride = t.ByteSize / t.Count
@@ -634,13 +637,35 @@ func (v *Variable) loadSliceInfo(t *dwarf.StructType) {
 			cval, err := readIntRaw(cstrAddr.Addr, 8)
 			if err == nil {
 				v.Cap = cval
+				v.capRead = true
 			}
 		}
 	}
 }
 
+func implausibleSliceHeader(base uint64, length, capacity int64, capRead bool, stride int64) string {
+	switch {
+	case length < 0:
+		return fmt.Sprintf("negative length %d", length)
+	case capRead && capacity < 0:
+		return fmt.Sprintf("negative capacity %d", capacity)
+	case capRead && length > capacity:
+		return fmt.Sprintf("length %d exceeds capacity %d", length, capacity)
+	case base == 0 && length > 0:
+		return fmt.Sprintf("nil data pointer with length %d", length)
+	case stride > 0 && length > (math.MaxInt64/stride):
+		return fmt.Sprintf("length %d overflows at element size %d", length, stride)
+	}
+	return ""
+}
+
 func (v *Variable) loadArrayValues(depth int, visited map[uint64]struct{}) {
 	if v.Unreadable != nil || v.Len == 0 || v.Base == 0 {
+		return
+	}
+
+	if why := implausibleSliceHeader(v.Base, v.Len, v.Cap, v.capRead, v.stride); why != "" {
+		v.Unreadable = fmt.Errorf("uninitialized? %s", why)
 		return
 	}
 
