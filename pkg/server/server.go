@@ -231,9 +231,20 @@ func (s *Server) listVariables(functionName string, line int, layer int) ([]vari
 func (s *Server) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	used, limit, refunds := codebull.CopyFunctionUsage()
 	json.NewEncoder(w).Encode(map[string]any{
 		"name": "Ego Shadow Process",
 		"duration_available": duration.RuntimeHooksReady(),
+		// How much of the per-process instrumentation budget is gone. Without
+		// this a user cannot see they are near the ceiling until a registration
+		// fails, and the failure does not say what the ceiling was either.
+		"copy_budget": map[string]any{
+			"used":               used,
+			"limit":              limit,
+			"remaining":          max(limit-used, 0),
+			"refunds_on_removal": refunds,
+			"note":               "Counts function copies made, not points currently installed. Removing a tracepoint does not return a slot, and re-registering the same function spends another.",
+		},
 	})
 }
 
