@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync"
 
 	"github.com/0xbu11/codebull/pkg/debugflag"
@@ -89,6 +88,19 @@ func (l *Locator) GetFunction(funcName string) (*Function, error) {
 		return fn, nil
 	}
 
+	fn, err := l.scanFunctions(funcName, false)
+	if err != nil {
+		fn, err = l.scanFunctions(funcName, true)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	l.funcCache[funcName] = fn
+	return fn, nil
+}
+
+func (l *Locator) scanFunctions(funcName string, normalized bool) (*Function, error) {
 	reader := l.Data.Reader()
 
 const (
@@ -129,16 +141,7 @@ const (
 				continue
 			}
 
-			match := false
-			if name == funcName {
-				match = true
-			} else if strings.HasSuffix(name, "."+funcName) {
-				match = true
-			} else if strings.HasSuffix(name, "/"+funcName) { // unlikely for Go but possible
-				match = true
-			}
-
-			if match {
+			if matchFuncName(name, funcName, normalized) {
 				fn := &Function{
 					Name:   name,
 					Offset: entry.Offset,
@@ -187,7 +190,6 @@ const (
 					}
 				}
 
-				l.funcCache[funcName] = fn
 				return fn, nil
 			}
 		}
